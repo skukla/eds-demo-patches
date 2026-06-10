@@ -94,49 +94,109 @@ emit_output() {
     return 0
 }
 
+# ledger_canonical <ledger> — echo the canonical URL for a ledger, falling back
+# to CANONICAL_URL when the ledger doesn't override. Supports multi-package
+# repos where each package's ledger may track a different upstream
+# (e.g. citisignal + custom share hlxsites; b2b tracks the B2B template).
+ledger_canonical() {
+    local ledger="$1" override
+    override="$(jq -r '.canonical // empty' "$ledger" 2>/dev/null)"
+    if [[ -n "$override" ]]; then
+        printf '%s\n' "$override"
+    else
+        printf '%s\n' "$CANONICAL_URL"
+    fi
+}
+
+# ledger_lkg_file <ledger> — echo the LKG file path a ledger writes to, falling
+# back to LKG_FILE (root) when unset. Ledgers sharing the default canonical
+# share the root LKG; ledgers with overrides usually point at a per-path file.
+ledger_lkg_file() {
+    local ledger="$1" override
+    override="$(jq -r '.lkgFile // empty' "$ledger" 2>/dev/null)"
+    if [[ -n "$override" ]]; then
+        printf '%s\n' "$override"
+    else
+        printf '%s\n' "$LKG_FILE"
+    fi
+}
+
+# slug_for_url <url> — derive a deterministic directory-safe slug for a git
+# URL so each unique canonical gets its own clone dir under workdir.
+slug_for_url() {
+    local url="$1"
+    printf '%s\n' "$url" | sed -E 's#^https?://github\.com/##; s#\.git$##; s#/#--#g'
+}
+
 main() {
     local workdir
     workdir="$(mktemp -d)"
     trap 'rm -rf "$workdir"' EXIT
 
-    # Injection seam: if CANONICAL_DIR/BLOCK_DIR are pre-set (tests, or a local
-    # run against existing clones), skip the network clone and use them as-is.
-    if [[ -z "$CANONICAL_DIR" ]]; then
-        echo "[lkg-gate] Cloning canonical ($CANONICAL_BRANCH) + block source ($BLOCK_SOURCE_BRANCH)..." >&2
-        # blob:none keeps full commit+tree history (for the touched-file FYI)
-        # while only fetching HEAD's blobs — the working tree we read against.
-        git clone --quiet --filter=blob:none --branch "$CANONICAL_BRANCH" "$CANONICAL_URL" "$workdir/canonical"
-        git clone --quiet --depth 1 --branch "$BLOCK_SOURCE_BRANCH" "$BLOCK_SOURCE_URL" "$workdir/blocks"
-        CANONICAL_DIR="$workdir/canonical"
-        BLOCK_DIR="$workdir/blocks"
-    else
+    # Single-canonical injection seam preserved for the existing test suite:
+    # when CANONICAL_DIR/BLOCK_DIR are pre-set, ALL ledgers verify against
+    # that pre-set canonical. Tests remain a single-canonical fixture;
+    # production cron honors per-ledger overrides via the multi-canonical
+    # path below.
+    local injected=0
+    if [[ -n "$CANONICAL_DIR" ]]; then
         echo "[lkg-gate] Using pre-set CANONICAL_DIR=$CANONICAL_DIR BLOCK_DIR=$BLOCK_DIR" >&2
+        injected=1
     fi
 
-    local canonical_sha prev_lkg
-    canonical_sha="$(git -C "$CANONICAL_DIR" rev-parse HEAD 2>/dev/null || echo unknown)"
-    prev_lkg="$([[ -f "$LKG_FILE" ]] && tr -d '[:space:]' < "$LKG_FILE" || true)"
+    if [[ "$injected" -eq 0 ]]; then
+        # Block source is single — block-targeting patches across ledgers share
+        # the demo team's block library today. Clone once.
+        echo "[lkg-gate] Cloning block source ($BLOCK_SOURCE_BRANCH)..." >&2
+        git clone --quiet --depth 1 --branch "$BLOCK_SOURCE_BRANCH" "$BLOCK_SOURCE_URL" "$workdir/blocks"
+        BLOCK_DIR="$workdir/blocks"
+    fi
 
-    local all_ok=1
+    # Per-ledger state captured in temp files (Bash 3 lacks associative arrays).
+    # One ledger == one LKG file. Ledgers sharing the same canonical end up
+    # cloning it once (the clone dir is named by URL slug, so the second
+    # ledger with the same URL hits the cached directory).
+    local statedir="$workdir/state"
+    mkdir -p "$statedir"
+
+    local all_ok_global=1
     local -a obsolete_ids=()
-    local -a touched_targets=()
-
     local ledger
     for ledger in ./*/code-patches.json; do
         [[ -e "$ledger" ]] || continue
-        echo "[lkg-gate] Verifying $ledger" >&2
-        local count
+
+        local url lkg_file slug clone_dir prev_lkg sha ledger_ok=1
+        url="$(ledger_canonical "$ledger")"
+        lkg_file="$(ledger_lkg_file "$ledger")"
+        slug="$(slug_for_url "$url")"
+
+        if [[ "$injected" -eq 1 ]]; then
+            clone_dir="$CANONICAL_DIR"
+        else
+            clone_dir="$workdir/canonical-$slug"
+            if [[ ! -d "$clone_dir" ]]; then
+                echo "[lkg-gate] Cloning $url ($CANONICAL_BRANCH) → $clone_dir" >&2
+                git clone --quiet --filter=blob:none --branch "$CANONICAL_BRANCH" "$url" "$clone_dir"
+            fi
+        fi
+
+        sha="$(git -C "$clone_dir" rev-parse HEAD 2>/dev/null || echo unknown)"
+        prev_lkg="$([[ -f "$lkg_file" ]] && tr -d '[:space:]' < "$lkg_file" || true)"
+
+        echo "[lkg-gate] Verifying $ledger against $url @ ${sha:0:7}" >&2
+        local count i
         count="$(jq '.patches | length' "$ledger")"
-        local i
+        local touched=""
         for ((i = 0; i < count; i++)); do
             local id target precond replacement file status
             id="$(jq -r ".patches[$i].id" "$ledger")"
             target="$(jq -r ".patches[$i].target" "$ledger")"
             precond="$(jq -r ".patches[$i].precondition" "$ledger")"
             replacement="$(jq -r ".patches[$i].replacement" "$ledger")"
+            CANONICAL_DIR="$clone_dir"
             file="$(resolve_target "$target")"
             status="$(classify_patch "$file" "$precond" "$replacement")"
-            touched_targets+=("$target")
+            touched+=" $target"
             case "$status" in
                 OK)
                     echo "  ✓ $id ($target)" >&2
@@ -144,50 +204,93 @@ main() {
                 OBSOLETE)
                     echo "  ⚠ OBSOLETE: $id — replacement already present in $target; fix appears to have landed upstream. Retirement PR candidate." >&2
                     obsolete_ids+=("$id")
-                    all_ok=0
+                    ledger_ok=0
+                    all_ok_global=0
                     ;;
                 FIXED_DIFFERENTLY)
                     echo "  ✗ FIXED_DIFFERENTLY: $id — precondition gone from $target and replacement not present. Human triage needed; current region:" >&2
                     if [[ -n "$file" ]]; then grep -nF "$(printf '%s' "$precond" | head -1)" "$file" >&2 || echo "    (anchor line not found)" >&2; fi
-                    all_ok=0
+                    ledger_ok=0
+                    all_ok_global=0
                     ;;
                 MULTI_MATCH)
                     echo "  ✗ MULTI_MATCH: $id — precondition matches more than once in $target (unsafe first-match). Tighten the anchor." >&2
-                    all_ok=0
+                    ledger_ok=0
+                    all_ok_global=0
                     ;;
                 MISSING)
                     echo "  ✗ MISSING: $id — target $target not found in canonical or block source." >&2
-                    all_ok=0
+                    ledger_ok=0
+                    all_ok_global=0
                     ;;
             esac
         done
+
+        # Capture this ledger's verification state for downstream FYI + outputs.
+        # Empty fields get a `-` placeholder so `read` (which collapses
+        # consecutive tab delimiters) doesn't lose them — translated back
+        # in the consumer loops below.
+        printf '%s\t%s\t%s\t%s\t%s\t%s\n' \
+            "$ledger" "$slug" "$sha" "${prev_lkg:--}" "$lkg_file" "$ledger_ok" \
+            >> "$statedir/ledgers.tsv"
+        printf '%s\n' "$touched" > "$statedir/touched-$slug"
+
+        # Touched-file FYI per ledger (canonical moved + ledger verified).
+        if [[ -n "$prev_lkg" && "$prev_lkg" != "$sha" ]]; then
+            echo "[lkg-gate] [$slug] Canonical commits since last LKG ($prev_lkg) touching patched files:" >&2
+            local uniq_targets
+            uniq_targets="$(printf '%s\n' $touched | sort -u | tr '\n' ' ')"
+            # shellcheck disable=SC2086
+            git -C "$clone_dir" log --oneline "${prev_lkg}..HEAD" -- $uniq_targets 2>/dev/null | sed 's/^/    /' >&2 \
+                || echo "    (could not enumerate — previous LKG not in fetched history)" >&2
+        fi
     done
 
-    # Touched-file FYI: canonical commits since the previous LKG that touched a
-    # patched file — an early heads-up even when all patches still apply.
-    # Best-effort: never fails the gate.
-    if [[ -n "$prev_lkg" && "$prev_lkg" != "$canonical_sha" ]]; then
-        echo "[lkg-gate] Canonical commits since last LKG ($prev_lkg) touching patched files:" >&2
-        local uniq_targets
-        uniq_targets="$(printf '%s\n' "${touched_targets[@]}" | sort -u)"
-        # shellcheck disable=SC2086
-        git -C "$CANONICAL_DIR" log --oneline "${prev_lkg}..HEAD" -- $uniq_targets 2>/dev/null | sed 's/^/    /' >&2 \
-            || echo "    (could not enumerate — previous LKG not in fetched history)" >&2
-    fi
+    # Workflow outputs: first ledger un-prefixed (backward compat), all
+    # ledgers also emitted with their slug for multi-canonical routing.
+    local first=1
+    while IFS=$'\t' read -r ledger slug sha prev_lkg lkg_file ledger_ok; do
+        # Translate `-` placeholder back to empty.
+        [[ "$prev_lkg" == "-" ]] && prev_lkg=""
+        if [[ "$first" -eq 1 ]]; then
+            emit_output "sha" "$sha"
+            emit_output "changed" "$([[ "$prev_lkg" != "$sha" ]] && echo true || echo false)"
+            emit_output "all_ok" "$([[ "$ledger_ok" -eq 1 ]] && echo true || echo false)"
+            first=0
+        fi
+        emit_output "sha_$slug" "$sha"
+        emit_output "changed_$slug" "$([[ "$prev_lkg" != "$sha" ]] && echo true || echo false)"
+        emit_output "all_ok_$slug" "$([[ "$ledger_ok" -eq 1 ]] && echo true || echo false)"
+        emit_output "lkg_file_$slug" "$lkg_file"
+    done < "$statedir/ledgers.tsv"
 
-    emit_output "sha" "$canonical_sha"
-    emit_output "changed" "$([[ "$prev_lkg" != "$canonical_sha" ]] && echo true || echo false)"
-    emit_output "all_ok" "$([[ "$all_ok" -eq 1 ]] && echo true || echo false)"
     if [[ "${#obsolete_ids[@]}" -gt 0 ]]; then
         emit_output "obsolete" "${obsolete_ids[*]}"
     fi
 
-    if [[ "$all_ok" -eq 1 ]]; then
-        echo "[lkg-gate] All patches verified against canonical $canonical_sha." >&2
-        printf '%s\n' "$canonical_sha"
+    if [[ "$all_ok_global" -eq 1 ]]; then
+        local n_ledgers
+        n_ledgers="$(wc -l < "$statedir/ledgers.tsv" | tr -d ' ')"
+        echo "[lkg-gate] All patches verified across $n_ledgers ledger(s):" >&2
+        while IFS=$'\t' read -r ledger slug sha prev_lkg lkg_file ledger_ok; do
+            [[ "$prev_lkg" == "-" ]] && prev_lkg=""
+            local moved="false"
+            [[ "$prev_lkg" != "$sha" ]] && moved="true"
+            echo "    $ledger @ ${sha:0:7} → $lkg_file (moved: $moved)" >&2
+            # Write LKG file if requested AND the canonical moved. Skipped in
+            # local dry-runs (developer testing) — gate runs read-only by
+            # default. CI sets WRITE_LKG=1 so cron-time advances persist.
+            if [[ "${WRITE_LKG:-0}" == "1" && "$moved" == "true" ]]; then
+                mkdir -p "$(dirname "$lkg_file")"
+                printf '%s\n' "$sha" > "$lkg_file"
+                echo "    wrote $lkg_file ← ${sha:0:7}" >&2
+            fi
+        done < "$statedir/ledgers.tsv"
+        # Stdout: first ledger's SHA (backward-compat with workflow).
+        head -1 "$statedir/ledgers.tsv" | cut -f3
         exit 0
     fi
-    echo "[lkg-gate] One or more patches did not verify cleanly; LKG pointer will not advance." >&2
+    echo "[lkg-gate] One or more patches did not verify cleanly; LKG pointer(s) will not advance." >&2
     exit 1
 }
 

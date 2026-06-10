@@ -1,0 +1,52 @@
+{
+    "version": "1.0.0",
+    "canonical": "https://github.com/adobe-commerce/boilerplate-b2b-template.git",
+    "patches": [
+        {
+            "id": "header-nav-tools-defensive",
+            "target": "blocks/header/header.js",
+            "description": "Make header.js defensive when the nav-tools section is missing (DA.live strips empty divs), preventing a null-reference crash.",
+            "precondition": "const navTools = nav.querySelector('.nav-tools');",
+            "replacement": "let navTools = nav.querySelector('.nav-tools');\n\n  // Create the nav-tools section if it is missing. DA.live strips empty\n  // divs during content processing, leaving nav with only 2 sections\n  // (brand, sections) instead of 3 \u2014 without this guard header.js throws\n  // \"Cannot read properties of null\".\n  if (!navTools) {\n    navTools = document.createElement('div');\n    navTools.classList.add('nav-tools');\n    nav.appendChild(navTools);\n  }",
+            "exit": "TODO(step-8): file PR to hlxsites/aem-boilerplate-commerce; delete on merge",
+            "critical": false
+        },
+        {
+            "id": "product-link-sku-encoding",
+            "target": "scripts/commerce.js",
+            "description": "Decode __ back to / when extracting a SKU from the URL, so SKUs containing forward slashes survive the round-trip to the Commerce API.",
+            "precondition": "function getSkuFromUrl() {\n  const path = window.location.pathname;\n  const result = path.match(/\\/products\\/[\\w|-]+\\/([\\w|-]+)$/);\n  return result?.[1];\n}",
+            "replacement": "function getSkuFromUrl() {\n  const path = window.location.pathname;\n  // Allow __ (encoded forward slash) in the SKU segment, then decode\n  // __ back to / so the Commerce API receives the original SKU.\n  const result = path.match(/\\/products\\/[^/]+\\/([^/]+)$/);\n  return result?.[1] ? result[1].replace(/__/g, '/') : null;\n}",
+            "exit": "TODO(step-8): file PR to hlxsites/aem-boilerplate-commerce; delete on merge",
+            "critical": false
+        },
+        {
+            "id": "product-link-sku-slash-encoding",
+            "target": "scripts/commerce.js",
+            "description": "Encode forward slashes in SKUs as __ when building product links, preserving slash information that sanitizeName() would otherwise destroy. Pairs with product-link-sku-encoding.",
+            "precondition": "export function getProductLink(urlKey, sku) {\n  if (!urlKey) {\n    console.warn('getProductLink: urlKey is missing or empty', { urlKey, sku });\n  }\n  if (!sku) {\n    console.warn('getProductLink: sku is missing or empty', { urlKey, sku });\n  }\n  const sanitizedUrlKey = urlKey ? sanitizeName(urlKey) : '';\n  const sanitizedSku = sku ? sanitizeName(sku) : '';\n  return rootLink(`/products/${sanitizedUrlKey}/${sanitizedSku}`);\n}",
+            "replacement": "export function getProductLink(urlKey, sku) {\n  if (!urlKey) {\n    console.warn('getProductLink: urlKey is missing or empty', { urlKey, sku });\n  }\n  if (!sku) {\n    console.warn('getProductLink: sku is missing or empty', { urlKey, sku });\n  }\n  const sanitizedUrlKey = urlKey ? sanitizeName(urlKey) : '';\n  // SKUs may contain forward slashes (e.g. \"apple-iphone-se/iphone-se\").\n  // sanitizeName() would destroy the slash, so split on /, sanitize each\n  // part, and rejoin with __ as the delimiter (getSkuFromUrl decodes it).\n  const sanitizedSku = sku\n    ? sku.split('/').map((part) => sanitizeName(part)).join('__')\n    : '';\n  return rootLink(`/products/${sanitizedUrlKey}/${sanitizedSku}`);\n}",
+            "exit": "TODO(step-8): file PR to hlxsites/aem-boilerplate-commerce; delete on merge",
+            "critical": false
+        },
+        {
+            "id": "aem-assets-sku-sanitization",
+            "target": "scripts/__dropins__/tools/lib/aem/assets.js",
+            "description": "Sanitize SKU aliases (replace / with -) in the AEM Assets image slot so SKUs containing forward slashes produce valid asset URLs. Consolidates what would otherwise be 14+ per-block import swaps into one dropin patch.",
+            "precondition": "const{wrapper:s,alias:m,params:r,imageProps:i}=e;if(!i.src)throw new Error(\"An image source is required. Please provide a `src` or `imageProps.src`.\");const n=s??document.createElement(\"div\"),o=w(i.src,m,r)",
+            "replacement": "const{wrapper:s,alias:m,params:r,imageProps:i}=e;if(!i.src)throw new Error(\"An image source is required. Please provide a `src` or `imageProps.src`.\");const sanitizedAlias=m.replace(/\\//g,\"-\");const n=s??document.createElement(\"div\"),o=w(i.src,sanitizedAlias,r)",
+            "exit": "TODO(step-8): file PR upstream to the @dropins aem-assets package; delete when the released dropin sanitizes aliases",
+            "critical": false
+        },
+        {
+            "id": "commerce-account-sidebar-selector-race",
+            "target": "blocks/commerce-account-sidebar/commerce-account-sidebar.js",
+            "description": "Fix the account-sidebar selector race that renders an empty left nav on freshly-published storefronts by also matching the authored structure (main > div > ol > li).",
+            "precondition": "const sidebarItemsConfig = fragment.querySelectorAll('.default-content-wrapper > ol > li');",
+            "replacement": "// Match the authored structure (main > div > ol > li) in addition to the\n// post-decoration class. The .default-content-wrapper class is added by\n// EDS's decoration pipeline, and its timing races against this query; on a\n// freshly-published storefront the race tips the wrong way and the sidebar\n// renders empty. The structural selector finds the items regardless.\nconst sidebarItemsConfig = fragment.querySelectorAll('main > div > ol > li, .default-content-wrapper > ol > li');",
+            "exit": "TODO(step-8): file PR to hlxsites/aem-boilerplate-commerce (cf. fork PR #2); delete on merge",
+            "critical": false
+        }
+    ],
+    "lkgFile": "b2b/last-known-good"
+}

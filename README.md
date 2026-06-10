@@ -21,13 +21,38 @@ Background and rationale: **ADR-006 "Thin-Layer Storefront Customization"** in t
 
 ```
 citisignal/
-  patches.json          content patches (DA.live HTML)
-  code-patches.json     code patches (canonical + demo-team block files)
-last-known-good         one-line canonical SHA storefronts build from
-scripts/lkg-gate.sh     the drift-gate check script
-tests/                  bash unit + integration tests for the gate
+  patches.json              content patches (DA.live HTML)
+  code-patches.json         code patches (canonical + demo-team block files)
+custom/
+  code-patches.json         2 universal patches against canonical (header + sidebar)
+b2b/
+  code-patches.json         5 patches (universal + SKU/slash) against the B2B template
+  last-known-good           B2B template SHA storefronts build from
+last-known-good             default canonical SHA (hlxsites) — shared by citisignal + custom
+scripts/lkg-gate.sh         the drift-gate check script
+tests/                      bash unit + integration tests for the gate
 .github/workflows/lkg-gate.yml   daily cron + PR-time gate
 ```
+
+### Multiple canonicals
+
+Most ledgers track Adobe's canonical `hlxsites/aem-boilerplate-commerce` and share the
+root `last-known-good`. A ledger can override that by declaring its own canonical and
+LKG file path:
+
+```json
+{
+  "version": "1.0.0",
+  "canonical": "https://github.com/adobe-commerce/boilerplate-b2b-template.git",
+  "lkgFile": "b2b/last-known-good",
+  "patches": [...]
+}
+```
+
+The drift gate clones each unique canonical once per run and verifies each ledger
+against its own canonical. The workflow advances each LKG pointer independently —
+B2B can move forward while citisignal+custom stay pinned (or vice versa) if only
+one canonical's patches still verify.
 
 ## Code patches (`code-patches.json`)
 
