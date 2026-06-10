@@ -1,0 +1,117 @@
+name: LKG drift gate
+
+# Last-known-good drift gate (ADR-006 §"Tracking canonical via a last-known-good gate").
+# Daily: verify every patch against canonical; advance `last-known-good` when green and
+# canonical moved; open a retirement PR when a patch's fix has landed upstream.
+# On PR: verify only — never advance the pointer (review-time correctness check).
+# No notification integration by design — a red run is the signal (owner preference).
+
+on:
+  schedule:
+    # 07:17 UTC daily — a quiet hour, off the top-of-hour Actions congestion.
+    - cron: '17 7 * * *'
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write          # commit `last-known-good`
+  pull-requests: write     # open retirement PRs
+
+concurrency:
+  group: lkg-gate
+  cancel-in-progress: false
+
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout patches repo
+        uses: actions/checkout@v4
+
+      - name: Ensure jq
+        run: |
+          if ! command -v jq >/dev/null 2>&1; then
+            sudo apt-get update && sudo apt-get install -y jq
+          fi
+          jq --version
+
+      - name: Run drift gate
+        id: gate
+        run: |
+          set +e
+          # The script appends sha/changed/all_ok/obsolete to $GITHUB_OUTPUT
+          # itself; we add rc. Stdout (the verified SHA) is captured for logs.
+          bash scripts/lkg-gate.sh
+          echo "rc=$?" >> "$GITHUB_OUTPUT"
+
+      - name: Advance last-known-good
+        # Cron/dispatch only, all patches green, canonical moved since last LKG.
+        if: >-
+          github.event_name != 'pull_request' &&
+          steps.gate.outputs.all_ok == 'true' &&
+          steps.gate.outputs.changed == 'true'
+        run: |
+          sha='${{ steps.gate.outputs.sha }}'
+          printf '%s\n' "$sha" > last-known-good
+          git config user.name 'github-actions[bot]'
+          git config user.email 'github-actions[bot]@users.noreply.github.com'
+          git add last-known-good
+          git commit -m "chore(lkg): advance to ${sha:0:7}
+
+          All patches verified against canonical $sha by the daily drift gate."
+          git push
+
+      - name: Open retirement PRs for obsolete patches
+        # Cron/dispatch only. The gate flagged patches whose fix appears to have
+        # landed upstream (precondition gone, replacement present). Propose
+        # removal; a human merges (never auto-delete — equivalence can be subtle).
+        if: >-
+          github.event_name != 'pull_request' &&
+          steps.gate.outputs.obsolete != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          base="$(git rev-parse --abbrev-ref HEAD)"
+          for id in ${{ steps.gate.outputs.obsolete }}; do
+            branch="lkg/retire-${id}"
+            # Skip if a retirement PR for this patch is already open.
+            if gh pr list --head "$branch" --state open --json number --jq 'length' | grep -q '^[1-9]'; then
+              echo "Retirement PR for '$id' already open — skipping."
+              continue
+            fi
+            git checkout -B "$branch" "$base"
+            for ledger in */code-patches.json; do
+              [ -e "$ledger" ] || continue
+              tmp="$(mktemp)"
+              jq --arg id "$id" '.patches |= map(select(.id != $id))' "$ledger" > "$tmp"
+              mv "$tmp" "$ledger"
+            done
+            git config user.name 'github-actions[bot]'
+            git config user.email 'github-actions[bot]@users.noreply.github.com'
+            git add ./*/code-patches.json
+            if git diff --cached --quiet; then
+              echo "No ledger change for '$id' — skipping."
+              continue
+            fi
+            git commit -m "chore(lkg): retire obsolete patch '${id}'"
+            git push -u origin "$branch" --force-with-lease
+            gh pr create \
+              --base "$base" \
+              --head "$branch" \
+              --title "chore(lkg): retire obsolete patch '${id}'" \
+              --body "The daily drift gate found that \`${id}\`'s precondition no longer matches canonical, **and** its replacement is already present — the fix appears to have landed upstream, making the patch obsolete.
+
+          Automation proposes removal; a human should confirm the upstream fix is truly equivalent before merging (per ADR-006: never auto-delete).
+
+          Verified canonical SHA: \`${{ steps.gate.outputs.sha }}\`"
+          done
+
+      - name: Fail the run if any patch did not verify
+        # Keeps the gate red on breakage/obsolete so it is the signal, and keeps
+        # the LKG pointer pinned until the patches repo is fixed.
+        if: steps.gate.outputs.all_ok != 'true'
+        run: |
+          echo "::error::Drift gate red — one or more patches did not verify cleanly. See the 'Run drift gate' logs."
+          exit 1
