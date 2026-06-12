@@ -85,19 +85,71 @@ Each patch is a named, precondition-anchored string replacement:
   not a customization mechanism — additive or upstream-first is the default. The
   steady-state ledger is single-digit (~6–8 patches).
 
-### Current ledger (`citisignal/code-patches.json`)
+### Patch reference — what each patch does and why
 
-| id | target | source | exit |
-|---|---|---|---|
-| `header-nav-tools-defensive` | `blocks/header/header.js` | canonical | upstream PR to hlxsites |
-| `product-link-sku-encoding` | `scripts/commerce.js` | canonical | upstream PR to hlxsites |
-| `product-link-sku-slash-encoding` | `scripts/commerce.js` | canonical | upstream PR to hlxsites |
-| `aem-assets-sku-sanitization` | `scripts/__dropins__/tools/lib/aem/assets.js` | canonical | upstream PR to @dropins |
-| `commerce-account-sidebar-selector-race` | `blocks/commerce-account-sidebar/commerce-account-sidebar.js` | canonical | upstream PR to hlxsites |
-| `product-teaser-sku-encoding` | `blocks/product-teaser/product-teaser.js` | demo-team block source | PR to demo-system-stores/accs-citisignal |
-| `product-teaser-image-url-handling` | `blocks/product-teaser/product-teaser.js` | demo-team block source | PR to demo-system-stores/accs-citisignal |
+Every patch, what it fixes, and why it's necessary. **Ledgers**: C = citisignal,
+B = b2b, U = custom. A patch in multiple ledgers is the identical
+precondition/replacement against each ledger's canonical.
 
-The two `product-teaser` patches target a demo-team block (sourced live from
+#### SKU URL encoding — `scripts/commerce.js` (C, B)
+
+PDPs live at `/products/{urlKey}/{sku}`. Canonical slugifies the SKU into the URL
+with the lossy `sanitizeName()` and then reverse-engineers the slug back into a
+SKU on PDP load to query Commerce. That round-trip silently fails for any SKU
+with spaces, punctuation, or mixed case (Commerce returns nothing → blank PDP).
+These two patches replace it with a **reversible, lowercase-stable, Helix-path-safe**
+encoding. Clean SKUs (`[a-z0-9-]`) encode unchanged, so common catalogs see no
+URL change; only messy SKUs gain `_HH` markers. Full rationale + the ruled-out
+alternatives (`encodeURIComponent`, urlKey-resolve) are in **ADR-007** in the
+`demo-builder-vscode` repo.
+
+- **`product-link-sku-encoding`** — adds the `encodeSkuForUrl` / `decodeSkuFromUrl`
+  helpers and decodes the SKU segment in `getSkuFromUrl()` before the Commerce
+  lookup.
+- **`product-link-sku-slash-encoding`** — `getProductLink()` builds links with
+  `encodeSkuForUrl(sku)` instead of `sanitizeName(sku)`. *(Id is historical — it
+  now does full reversible encoding, not just forward slashes.)*
+
+> ⚠️ **Coupling:** these two replacements mirror
+> `demo-builder-vscode/src/features/eds/services/pdpUrlEncoding.ts` **byte-for-byte**
+> — the extension builds prewarm/publish paths with that module, and a published
+> path must match the link the storefront generates. Change both together.
+
+#### product-teaser → canonical `getProductLink` (C)
+
+`product-teaser` is a **demo-team custom block** (lives in
+`demo-system-stores/accs-citisignal`, not in Adobe canonical or the b2b template).
+It hand-built its "Details" link via `rootLink(\`/products/${urlKey}/${sku}\`)`,
+**bypassing `getProductLink`** — so it missed the SKU encoding entirely. Rather
+than give it its own copy of the encoder, these route it through the canonical
+builder (which every Adobe product block already uses), so it inherits the
+encoding and urlKey sanitization for free.
+
+- **`product-teaser-sku-encoding`** — the Details link calls
+  `getProductLink(urlKey, sku)` instead of hand-building it.
+- **`product-teaser-getproductlink-import`** — swaps the block's `rootLink` import
+  for `getProductLink` (its only `rootLink` use was that link).
+
+#### Defensive / rendering fixes
+
+- **`header-nav-tools-defensive`** — `blocks/header/header.js` (C, B, U). Creates
+  the `.nav-tools` section when it's missing. DA.live strips empty divs during
+  content processing, leaving header.js to throw "Cannot read properties of null".
+- **`commerce-account-sidebar-selector-race`** —
+  `blocks/commerce-account-sidebar/commerce-account-sidebar.js` (C, B, U). Also
+  matches the authored `main > div > ol > li` structure so a freshly-published
+  storefront's account sidebar isn't empty — the post-decoration class it
+  originally queried races against EDS's decoration pipeline.
+- **`aem-assets-sku-sanitization`** —
+  `scripts/__dropins__/tools/lib/aem/assets.js` (C, B). Replaces `/` with `-` in
+  SKU image aliases so SKUs containing forward slashes produce valid AEM Assets
+  delivery URLs. One dropin patch instead of 14+ per-block import swaps.
+- **`product-teaser-image-url-handling`** —
+  `blocks/product-teaser/product-teaser.js` (C). Renders standard Commerce media
+  URLs directly instead of forcing every image through the AEM Assets delivery
+  path, which would break non-AEM-Assets image sources.
+
+`product-teaser*` patches target a demo-team block (sourced live from
 `demo-system-stores/accs-citisignal`, not canonical) and apply post-install. The
 gate resolves each target against canonical first, then the block source.
 

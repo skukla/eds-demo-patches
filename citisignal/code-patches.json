@@ -13,19 +13,19 @@
         {
             "id": "product-link-sku-encoding",
             "target": "scripts/commerce.js",
-            "description": "Decode __ back to / when extracting a SKU from the URL, so SKUs containing forward slashes survive the round-trip to the Commerce API.",
+            "description": "Add reversible encodeSkuForUrl/decodeSkuFromUrl helpers and decode the SKU segment on PDP load, so SKUs with spaces/punctuation/mixed case round-trip to the Commerce API. Replaces the lossy slug + __-slash scheme (ADR-007).",
             "precondition": "function getSkuFromUrl() {\n  const path = window.location.pathname;\n  const result = path.match(/\\/products\\/[\\w|-]+\\/([\\w|-]+)$/);\n  return result?.[1];\n}",
-            "replacement": "function getSkuFromUrl() {\n  const path = window.location.pathname;\n  // Allow __ (encoded forward slash) in the SKU segment, then decode\n  // __ back to / so the Commerce API receives the original SKU.\n  const result = path.match(/\\/products\\/[^/]+\\/([^/]+)$/);\n  return result?.[1] ? result[1].replace(/__/g, '/') : null;\n}",
-            "exit": "TODO(step-8): file PR to hlxsites/aem-boilerplate-commerce; delete on merge",
+            "replacement": "/**\n * Reversible, lowercase-stable, Helix-path-safe SKU encoding for PDP URLs.\n * Keeps [a-z0-9-] literal; escapes every other UTF-8 byte (including _) as\n * _HH lowercase hex. MIRROR of demo-builder-vscode\n * src/features/eds/services/pdpUrlEncoding.ts — keep byte-for-byte identical\n * (see ADR-007). Clean SKUs encode unchanged; SKUs with spaces/punctuation\n * round-trip instead of breaking. Decode is modulo case — Helix lowercases\n * content-bus paths and Catalog Service SKU lookup is case-insensitive.\n */\nexport function encodeSkuForUrl(sku) {\n  const bytes = new TextEncoder().encode(sku.toLowerCase());\n  let out = '';\n  for (const b of bytes) {\n    const ch = String.fromCharCode(b);\n    out += /[a-z0-9-]/.test(ch) ? ch : `_${b.toString(16).padStart(2, '0')}`;\n  }\n  return out;\n}\n\nfunction decodeSkuFromUrl(value) {\n  const bytes = [];\n  for (let i = 0; i < value.length; i += 1) {\n    if (value[i] === '_') {\n      bytes.push(parseInt(value.slice(i + 1, i + 3), 16));\n      i += 2;\n    } else {\n      bytes.push(value.charCodeAt(i));\n    }\n  }\n  return new TextDecoder().decode(new Uint8Array(bytes));\n}\n\nfunction getSkuFromUrl() {\n  const path = window.location.pathname;\n  // Allow the full Helix-safe alphabet in the SKU segment, then decode the\n  // _HH escapes back to the original SKU before querying Commerce.\n  const result = path.match(/\\/products\\/[^/]+\\/([^/]+)$/);\n  return result?.[1] ? decodeSkuFromUrl(result[1]) : null;\n}",
+            "exit": "TODO: file PR to upstream so canonical encodes SKUs reversibly; delete on merge. See ADR-007.",
             "critical": false
         },
         {
             "id": "product-link-sku-slash-encoding",
             "target": "scripts/commerce.js",
-            "description": "Encode forward slashes in SKUs as __ when building product links, preserving slash information that sanitizeName() would otherwise destroy. Pairs with product-link-sku-encoding.",
+            "description": "Build product links with reversible encodeSkuForUrl(sku) instead of lossy sanitizeName(sku), so the generated PDP URL decodes back to the exact SKU. Pairs with product-link-sku-encoding (ADR-007). (Id is historical — now full encoding, not just slashes.)",
             "precondition": "export function getProductLink(urlKey, sku) {\n  if (!urlKey) {\n    console.warn('getProductLink: urlKey is missing or empty', { urlKey, sku });\n  }\n  if (!sku) {\n    console.warn('getProductLink: sku is missing or empty', { urlKey, sku });\n  }\n  const sanitizedUrlKey = urlKey ? sanitizeName(urlKey) : '';\n  const sanitizedSku = sku ? sanitizeName(sku) : '';\n  return rootLink(`/products/${sanitizedUrlKey}/${sanitizedSku}`);\n}",
-            "replacement": "export function getProductLink(urlKey, sku) {\n  if (!urlKey) {\n    console.warn('getProductLink: urlKey is missing or empty', { urlKey, sku });\n  }\n  if (!sku) {\n    console.warn('getProductLink: sku is missing or empty', { urlKey, sku });\n  }\n  const sanitizedUrlKey = urlKey ? sanitizeName(urlKey) : '';\n  // SKUs may contain forward slashes (e.g. \"apple-iphone-se/iphone-se\").\n  // sanitizeName() would destroy the slash, so split on /, sanitize each\n  // part, and rejoin with __ as the delimiter (getSkuFromUrl decodes it).\n  const sanitizedSku = sku\n    ? sku.split('/').map((part) => sanitizeName(part)).join('__')\n    : '';\n  return rootLink(`/products/${sanitizedUrlKey}/${sanitizedSku}`);\n}",
-            "exit": "TODO(step-8): file PR to hlxsites/aem-boilerplate-commerce; delete on merge",
+            "replacement": "export function getProductLink(urlKey, sku) {\n  if (!urlKey) {\n    console.warn('getProductLink: urlKey is missing or empty', { urlKey, sku });\n  }\n  if (!sku) {\n    console.warn('getProductLink: sku is missing or empty', { urlKey, sku });\n  }\n  const sanitizedUrlKey = urlKey ? sanitizeName(urlKey) : '';\n  // Reversible, Helix-safe SKU encoding (see encodeSkuForUrl) instead of the\n  // lossy sanitizeName(), so SKUs with spaces/punctuation/mixed case survive\n  // the round-trip to the Commerce API on PDP load.\n  const sanitizedSku = sku ? encodeSkuForUrl(sku) : '';\n  return rootLink(`/products/${sanitizedUrlKey}/${sanitizedSku}`);\n}",
+            "exit": "TODO: file PR to upstream so canonical encodes SKUs reversibly; delete on merge. See ADR-007.",
             "critical": false
         },
         {
@@ -49,10 +49,19 @@
         {
             "id": "product-teaser-sku-encoding",
             "target": "blocks/product-teaser/product-teaser.js",
-            "description": "Encode forward slashes as __ in the product-teaser Details link. The teaser builds links via rootLink() directly, bypassing commerce.js getProductLink, so it needs its own slash encoding.",
+            "description": "Build the product-teaser Details link with the canonical getProductLink(urlKey, sku) instead of hand-building it with rootLink — so this demo-team custom block (demo-system-stores/accs-citisignal) inherits the same reversible SKU encoding and urlKey sanitization as every Adobe canonical product block, instead of bypassing getProductLink (ADR-007).",
             "precondition": "rootLink(`/products/${urlKey}/${sku}`)",
-            "replacement": "rootLink(`/products/${urlKey}/${sku?.replace(/\\//g, '__')}`)",
-            "exit": "TODO(step-8): file PR to demo-system-stores/accs-citisignal; delete on merge",
+            "replacement": "getProductLink(urlKey, sku)",
+            "exit": "TODO: file PR to upstream so canonical encodes SKUs reversibly; delete on merge. See ADR-007.",
+            "critical": false
+        },
+        {
+            "id": "product-teaser-getproductlink-import",
+            "target": "blocks/product-teaser/product-teaser.js",
+            "description": "Swap the product-teaser's rootLink import for getProductLink (its only rootLink use is the Details link, now routed through getProductLink). Paired with product-teaser-sku-encoding (ADR-007).",
+            "precondition": "import {\n  rootLink,\n} from '../../scripts/commerce.js';",
+            "replacement": "import {\n  getProductLink,\n} from '../../scripts/commerce.js';",
+            "exit": "TODO: file PR to upstream so canonical encodes SKUs reversibly; delete on merge. See ADR-007.",
             "critical": false
         },
         {
