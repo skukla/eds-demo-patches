@@ -1,0 +1,79 @@
+{
+    "version": "1.0.0",
+    "canonical": "https://github.com/adobe-commerce/boilerplate-b2b-template.git",
+    "patches": [
+        {
+            "id": "header-nav-tools-defensive",
+            "target": "blocks/header/header.js",
+            "description": "Make header.js defensive when the nav-tools section is missing (DA.live strips empty divs), preventing a null-reference crash.",
+            "precondition": "const navTools = nav.querySelector('.nav-tools');",
+            "replacement": "let navTools = nav.querySelector('.nav-tools');\n\n  // Create the nav-tools section if it is missing. DA.live strips empty\n  // divs during content processing, leaving nav with only 2 sections\n  // (brand, sections) instead of 3 — without this guard header.js throws\n  // \"Cannot read properties of null\".\n  if (!navTools) {\n    navTools = document.createElement('div');\n    navTools.classList.add('nav-tools');\n    nav.appendChild(navTools);\n  }",
+            "exit": "TODO(step-8): file PR to hlxsites/aem-boilerplate-commerce; delete on merge",
+            "critical": false
+        },
+        {
+            "id": "product-link-sku-encoding",
+            "target": "scripts/commerce.js",
+            "description": "Add reversible encodeSkuForUrl/decodeSkuFromUrl helpers and decode the SKU segment on PDP load, so SKUs with spaces/punctuation/mixed case round-trip to the Commerce API. Replaces the lossy slug + __-slash scheme (ADR-007).",
+            "precondition": "function getSkuFromUrl() {\n  const path = window.location.pathname;\n  const result = path.match(/\\/products\\/[\\w|-]+\\/([\\w|-]+)$/);\n  return result?.[1];\n}",
+            "replacement": "/**\n * Reversible, lowercase-stable, Helix-path-safe SKU encoding for PDP URLs.\n * Keeps [a-z0-9-] literal; escapes every other UTF-8 byte (including _) as\n * _HH lowercase hex. MIRROR of demo-builder-vscode\n * src/features/eds/services/pdpUrlEncoding.ts — keep byte-for-byte identical\n * (see ADR-007). Clean SKUs encode unchanged; SKUs with spaces/punctuation\n * round-trip instead of breaking. Decode is modulo case — Helix lowercases\n * content-bus paths and Catalog Service SKU lookup is case-insensitive.\n */\nexport function encodeSkuForUrl(sku) {\n  const bytes = new TextEncoder().encode(sku.toLowerCase());\n  let out = '';\n  for (const b of bytes) {\n    const ch = String.fromCharCode(b);\n    out += /[a-z0-9-]/.test(ch) ? ch : `_${b.toString(16).padStart(2, '0')}`;\n  }\n  return out;\n}\n\nfunction decodeSkuFromUrl(value) {\n  const bytes = [];\n  for (let i = 0; i < value.length; i += 1) {\n    if (value[i] === '_') {\n      bytes.push(parseInt(value.slice(i + 1, i + 3), 16));\n      i += 2;\n    } else {\n      bytes.push(value.charCodeAt(i));\n    }\n  }\n  return new TextDecoder().decode(new Uint8Array(bytes));\n}\n\nfunction getSkuFromUrl() {\n  const path = window.location.pathname;\n  // Allow the full Helix-safe alphabet in the SKU segment, then decode the\n  // _HH escapes back to the original SKU before querying Commerce.\n  const result = path.match(/\\/products\\/[^/]+\\/([^/]+)$/);\n  return result?.[1] ? decodeSkuFromUrl(result[1]) : null;\n}",
+            "exit": "TODO: file PR to upstream so canonical encodes SKUs reversibly; delete on merge. See ADR-007.",
+            "critical": false
+        },
+        {
+            "id": "product-link-sku-slash-encoding",
+            "target": "scripts/commerce.js",
+            "description": "Build product links with reversible encodeSkuForUrl(sku) instead of lossy sanitizeName(sku), so the generated PDP URL decodes back to the exact SKU. Pairs with product-link-sku-encoding (ADR-007). (Id is historical — now full encoding, not just slashes.)",
+            "precondition": "export function getProductLink(urlKey, sku) {\n  if (!urlKey) {\n    console.warn('getProductLink: urlKey is missing or empty', { urlKey, sku });\n  }\n  if (!sku) {\n    console.warn('getProductLink: sku is missing or empty', { urlKey, sku });\n  }\n  const sanitizedUrlKey = urlKey ? sanitizeName(urlKey) : '';\n  const sanitizedSku = sku ? sanitizeName(sku) : '';\n  return rootLink(`/products/${sanitizedUrlKey}/${sanitizedSku}`);\n}",
+            "replacement": "export function getProductLink(urlKey, sku) {\n  if (!urlKey) {\n    console.warn('getProductLink: urlKey is missing or empty', { urlKey, sku });\n  }\n  if (!sku) {\n    console.warn('getProductLink: sku is missing or empty', { urlKey, sku });\n  }\n  const sanitizedUrlKey = urlKey ? sanitizeName(urlKey) : '';\n  // Reversible, Helix-safe SKU encoding (see encodeSkuForUrl) instead of the\n  // lossy sanitizeName(), so SKUs with spaces/punctuation/mixed case survive\n  // the round-trip to the Commerce API on PDP load.\n  const sanitizedSku = sku ? encodeSkuForUrl(sku) : '';\n  return rootLink(`/products/${sanitizedUrlKey}/${sanitizedSku}`);\n}",
+            "exit": "TODO: file PR to upstream so canonical encodes SKUs reversibly; delete on merge. See ADR-007.",
+            "critical": false
+        },
+        {
+            "id": "aem-assets-sku-sanitization",
+            "target": "scripts/__dropins__/tools/lib/aem/assets.js",
+            "description": "Sanitize SKU aliases (replace / with -) in the AEM Assets image slot so SKUs containing forward slashes produce valid asset URLs. Consolidates what would otherwise be 14+ per-block import swaps into one dropin patch.",
+            "precondition": "const{wrapper:s,alias:m,params:r,imageProps:i}=e;if(!i.src)throw new Error(\"An image source is required. Please provide a `src` or `imageProps.src`.\");const n=s??document.createElement(\"div\"),o=w(i.src,m,r)",
+            "replacement": "const{wrapper:s,alias:m,params:r,imageProps:i}=e;if(!i.src)throw new Error(\"An image source is required. Please provide a `src` or `imageProps.src`.\");const sanitizedAlias=m.replace(/\\//g,\"-\");const n=s??document.createElement(\"div\"),o=w(i.src,sanitizedAlias,r)",
+            "exit": "TODO(step-8): file PR upstream to the @dropins aem-assets package; delete when the released dropin sanitizes aliases",
+            "critical": false
+        },
+        {
+            "id": "commerce-account-sidebar-selector-race",
+            "target": "blocks/commerce-account-sidebar/commerce-account-sidebar.js",
+            "description": "Fix the account-sidebar selector race that renders an empty left nav on freshly-published storefronts by also matching the authored structure (main > div > ol > li).",
+            "precondition": "const sidebarItemsConfig = fragment.querySelectorAll('.default-content-wrapper > ol > li');",
+            "replacement": "// Match the authored structure (main > div > ol > li) in addition to the\n// post-decoration class. The .default-content-wrapper class is added by\n// EDS's decoration pipeline, and its timing races against this query; on a\n// freshly-published storefront the race tips the wrong way and the sidebar\n// renders empty. The structural selector finds the items regardless.\nconst sidebarItemsConfig = fragment.querySelectorAll('main > div > ol > li, .default-content-wrapper > ol > li');",
+            "exit": "TODO(step-8): file PR to hlxsites/aem-boilerplate-commerce (cf. fork PR #2); delete on merge",
+            "critical": false
+        },
+        {
+            "id": "product-teaser-sku-encoding",
+            "target": "blocks/product-teaser/product-teaser.js",
+            "description": "Build the product-teaser Details link with the canonical getProductLink(urlKey, sku) instead of hand-building it with rootLink — so this demo-team custom block (demo-system-stores/accs-citisignal) inherits the same reversible SKU encoding and urlKey sanitization as every Adobe canonical product block, instead of bypassing getProductLink (ADR-007).",
+            "precondition": "rootLink(`/products/${urlKey}/${sku}`)",
+            "replacement": "getProductLink(urlKey, sku)",
+            "exit": "TODO: file PR to upstream so canonical encodes SKUs reversibly; delete on merge. See ADR-007.",
+            "critical": false
+        },
+        {
+            "id": "product-teaser-getproductlink-import",
+            "target": "blocks/product-teaser/product-teaser.js",
+            "description": "Swap the product-teaser's rootLink import for getProductLink (its only rootLink use is the Details link, now routed through getProductLink). Paired with product-teaser-sku-encoding (ADR-007).",
+            "precondition": "import {\n  rootLink,\n} from '../../scripts/commerce.js';",
+            "replacement": "import {\n  getProductLink,\n} from '../../scripts/commerce.js';",
+            "exit": "TODO: file PR to upstream so canonical encodes SKUs reversibly; delete on merge. See ADR-007.",
+            "critical": false
+        },
+        {
+            "id": "product-teaser-image-url-handling",
+            "target": "blocks/product-teaser/product-teaser.js",
+            "description": "Render standard Commerce media URLs directly in the product-teaser instead of forcing every image through the AEM Assets delivery path (which breaks non-AEM-Assets image sources).",
+            "precondition": "function renderImage(product, size = 250) {\n  const { name } = product;\n  const { url: imageUrl, label } = product.images[0];",
+            "replacement": "function renderImage(product, size = 250) {\n  const { name } = product;\n  const { url: imageUrl, label } = product.images[0];\n\n  // Standard Commerce media URLs are not AEM Assets URLs. Render them\n  // directly instead of rewriting them into an AEM Assets delivery path,\n  // which would produce broken image links for non-AEM-Assets sources.\n  if (!imageUrl.includes('/adobe/assets/')) {\n    const fullUrl = imageUrl.startsWith('//') ? `https:${imageUrl}` : imageUrl;\n    return document.createRange().createContextualFragment(`<picture>\n      <img height=\"${size}\" width=\"${size}\" src=\"${fullUrl}\" loading=\"eager\" alt=\"${label}\" />\n    </picture>`);\n  }",
+            "exit": "TODO(step-8): file PR to demo-system-stores/accs-citisignal; delete on merge",
+            "critical": false
+        }
+    ],
+    "lkgFile": "b2b/last-known-good"
+}
