@@ -40,6 +40,10 @@ LKG_FILE="${LKG_FILE:-last-known-good}"
 CANONICAL_DIR="${CANONICAL_DIR:-}"
 BLOCK_DIR="${BLOCK_DIR:-}"
 
+# This script's own directory, so it can find sibling scripts (derive-surfaces.mjs)
+# regardless of the caller's CWD.
+SCRIPT_SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
 # count_occurrences <file> <needle> — count non-overlapping occurrences of a
 # (possibly multi-line) needle in a file. Uses jq's string `indices`, which
 # handles arbitrary content without shell/regex interpretation.
@@ -225,6 +229,25 @@ main() {
                     ;;
             esac
         done
+
+        # Runtime-surface drift check (ADR-008) — advisory, never affects the
+        # LKG pass/fail. Re-derive the storefront's runtime surfaces from this
+        # ledger's canonical clone and diff against the committed `derived` block.
+        # On drift it writes <ledger-dir>/runtime-surfaces.json.proposed and emits
+        # surfaces_changed_<slug>=true; the workflow opens a PR. Non-fatal by
+        # design: a missing orphan should propose a fix, not freeze patch currency
+        # (and a node/script hiccup must never red the gate).
+        local ledger_dir surfaces_file surfaces_changed="false"
+        ledger_dir="$(dirname "$ledger")"
+        surfaces_file="$ledger_dir/runtime-surfaces.json"
+        if [[ -f "$surfaces_file" ]] && command -v node >/dev/null 2>&1; then
+            if node "$SCRIPT_SELF_DIR/derive-surfaces.mjs" check "$clone_dir" "$surfaces_file" --sha "$sha" >&2; then
+                [[ -f "$surfaces_file.proposed" ]] && surfaces_changed="true"
+            else
+                echo "  ! surface check errored for $ledger_dir (non-fatal) — skipping" >&2
+            fi
+        fi
+        emit_output "surfaces_changed_$slug" "$surfaces_changed"
 
         # Capture this ledger's verification state for downstream FYI + outputs.
         # Empty fields get a `-` placeholder so `read` (which collapses
