@@ -1,0 +1,45 @@
+{
+  "_comment": "Runtime surfaces the B2B storefront fetches at runtime but the CDN index omits (ADR-008). The 'derived' block is MACHINE-OWNED: regenerated from the boilerplate code by scripts/derive-surfaces.mjs and kept honest by the LKG gate, which opens a PR on drift. Do not hand-edit 'derived' — it will be overwritten. The 'residual' block is HUMAN-OWNED: platform/content surfaces no static scan can derive; each carries a reason.",
+  "derivedFrom": "160b453e17b41b2a00c05091b17e23a337594a85",
+  "derived": {
+    "fragments": [
+      "/customer/sidebar-fragment"
+    ],
+    "navFooter": [
+      "/footer",
+      "/nav"
+    ],
+    "placeholderSheets": [
+      "placeholders/account",
+      "placeholders/auth",
+      "placeholders/cart",
+      "placeholders/checkout",
+      "placeholders/company",
+      "placeholders/global",
+      "placeholders/order",
+      "placeholders/payment-services",
+      "placeholders/pdp",
+      "placeholders/purchase-order",
+      "placeholders/quick-order",
+      "placeholders/quote-management",
+      "placeholders/recommendations",
+      "placeholders/requisition-list",
+      "placeholders/search",
+      "placeholders/wishlist"
+    ],
+    "customerPages": [
+      "/customer/account",
+      "/customer/login",
+      "/customer/orders",
+      "/customer/sidebar-fragment"
+    ]
+  },
+  "residual": {
+    "spreadsheets": [
+      "/metadata",
+      "/redirects",
+      "/sitemap"
+    ],
+    "_reason": "Helix platform conventions — served by the platform, referenced nowhere in storefront code, so no static scan can derive them. Stable; reviewed by hand. (/placeholders, the default sheet, is derived via bare fetchPlaceholders() and lives in placeholderSheets.) /customer/create-account is content-linked (reached by discovery), not a code literal, so it is not declared here."
+  }
+}

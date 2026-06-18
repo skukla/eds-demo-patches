@@ -36,6 +36,14 @@ jobs:
           fi
           jq --version
 
+      - name: Ensure node
+        # The gate shells out to scripts/derive-surfaces.mjs for the ADR-008
+        # runtime-surface drift check. Node is preinstalled on ubuntu-latest;
+        # pin it for determinism.
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
       - name: Run drift gate
         id: gate
         # WRITE_LKG=1 enables file-writing for the per-ledger LKG advances.
@@ -121,6 +129,56 @@ jobs:
 
           Verified canonical SHA: \`${{ steps.gate.outputs.sha }}\`"
           done
+
+      - name: Open PR for runtime-surface drift
+        # Cron/dispatch only. The gate's surface check (ADR-008) wrote a
+        # `runtime-surfaces.json.proposed` for any ledger whose boilerplate now
+        # references a runtime surface the committed `derived` block is missing
+        # (or no longer references one it lists). Propose the refreshed `derived`
+        # block; a human merges (the `residual` block is preserved untouched).
+        # Advisory — independent of the patch pass/fail above.
+        if: github.event_name != 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          proposed=( */runtime-surfaces.json.proposed )
+          if [ ${#proposed[@]} -eq 0 ]; then
+            echo "No runtime-surface drift — nothing to propose."
+            exit 0
+          fi
+          base="$(git rev-parse --abbrev-ref HEAD)"
+          branch="lkg/surface-drift"
+          git checkout -B "$branch" "$base"
+          summary=""
+          for p in "${proposed[@]}"; do
+            real="${p%.proposed}"
+            mv "$p" "$real"
+            summary="${summary}- \`${real}\`"$'\n'
+          done
+          git config user.name 'github-actions[bot]'
+          git config user.email 'github-actions[bot]@users.noreply.github.com'
+          git add ./*/runtime-surfaces.json
+          if git diff --cached --quiet; then
+            echo "Proposed files matched committed — nothing to commit."
+            exit 0
+          fi
+          git commit -m "chore(surfaces): refresh derived runtime surfaces from canonical"
+          git push -u origin "$branch" --force-with-lease
+          # Reuse an open PR for this branch if present; otherwise open one.
+          if [ "$(gh pr list --head "$branch" --state open --json number --jq 'length')" -ge 1 ]; then
+            echo "Surface-drift PR already open — updated its branch."
+            exit 0
+          fi
+          gh pr create \
+            --base "$base" \
+            --head "$branch" \
+            --title "chore(surfaces): refresh derived runtime surfaces from canonical" \
+            --body "The daily drift gate re-derived the storefront runtime surfaces from canonical and found the committed \`derived\` block is out of date (ADR-008). Files updated:
+
+          ${summary}
+          The machine-owned \`derived\` block was regenerated; the human-owned \`residual\` block is untouched. **Per-surface provenance (file:line) is in the 'Run drift gate' logs** under each \`+ /…\` line. Automation proposes; review the additions (is a new surface really needed, or variant-only?) before merging."
 
       - name: Fail the run if any patch did not verify
         # Keeps the gate red on breakage/obsolete so it is the signal, and keeps
