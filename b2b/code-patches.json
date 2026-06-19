@@ -46,6 +46,15 @@
             "replacement": "// Match the authored structure (main > div > ol > li) in addition to the\n// post-decoration class. The .default-content-wrapper class is added by\n// EDS's decoration pipeline, and its timing races against this query; on a\n// freshly-published storefront the race tips the wrong way and the sidebar\n// renders empty. The structural selector finds the items regardless.\nconst sidebarItemsConfig = fragment.querySelectorAll('main > div > ol > li, .default-content-wrapper > ol > li');",
             "exit": "TODO(step-8): file PR to hlxsites/aem-boilerplate-commerce (cf. fork PR #2); delete on merge",
             "critical": false
+        },
+        {
+            "id": "account-page-column-layout",
+            "target": "scripts/scripts.js",
+            "description": "Render the B2B account page as a nav-left/content-right sidebar. The page authors a 30%/70% split via Section Metadata (data-column-width), but the boilerplate only lays sections into a row under body.columns with a --column-width var, and nothing translates the authored attribute. This decorates data-column-width sections into the var + adds body.columns, so the existing body.columns flex rule renders the sidebar (mobile stacks below 900px). Layout only - no styling.",
+            "precondition": "export function decorateMain(main) {\n  decorateLinks(main);\n  decorateIcons(main);\n  buildAutoBlocks(main);\n  decorateSections(main);\n  decorateBlocks(main);\n  decorateButtons(main);\n}",
+            "replacement": "/**\n * Activate the boilerplate's authored column layout (Demo Builder thin-layer patch).\n * The account page authors a 30%/70% split via Section Metadata (data-column-width),\n * but the boilerplate only lays sections into a row when body.columns is set and each\n * section carries the --column-width var, and nothing translates the authored attribute.\n * Feed data-column-width into --column-width and switch on body.columns so the existing\n * `body.columns main > .section { flex-basis: var(--column-width) }` rule renders the\n * sidebar layout (mobile stacks below 900px). Layout only - no styling.\n */\nfunction decorateColumnSections(main) {\n  const columns = main.querySelectorAll(':scope > .section[data-column-width]');\n  if (!columns.length) return;\n  columns.forEach((section) => {\n    section.style.setProperty('--column-width', section.dataset.columnWidth);\n  });\n  document.body.classList.add('columns');\n}\n\nexport function decorateMain(main) {\n  decorateLinks(main);\n  decorateIcons(main);\n  buildAutoBlocks(main);\n  decorateSections(main);\n  decorateColumnSections(main);\n  decorateBlocks(main);\n  decorateButtons(main);\n}",
+            "exit": "TODO: file PR to hlxsites/aem-boilerplate-commerce to honor section data-column-width; delete on merge",
+            "critical": false
         }
     ],
     "lkgFile": "b2b/last-known-good"
