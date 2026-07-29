@@ -1,0 +1,44 @@
+name: Validate code ledgers
+
+# Schema + target-policy gate for `*/code-patches.json`.
+#
+# Code patches are written into colleagues' storefront repos by the Demo Builder
+# extension and run in demo audiences' browsers. This blocks a ledger entry that
+# names anything outside storefront JavaScript — `package.json` (arbitrary code
+# at install time) and `.github/workflows/*` (that repo's CI secrets) being the
+# two that matter.
+#
+# Kept separate from lkg-gate.yml on purpose: that workflow clones canonical
+# repos and runs on a schedule, so validation would sit behind minutes of setup.
+# This is seconds and fails fast on the PR that introduced the problem.
+#
+# The identical rule also runs inside the extension
+# (src/features/eds/services/patchTargetPolicy.ts). That duplication is
+# deliberate — this protects the repo, that protects the user, and a compromise
+# able to rewrite a ledger can rewrite this workflow too. Only the
+# consumer-side check survives that, so neither may depend on the other.
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Unit tests for the validator
+        run: node --test scripts/validate-code-ledgers.test.mjs
+
+      - name: Validate every code ledger
+        run: node scripts/validate-code-ledgers.mjs .
