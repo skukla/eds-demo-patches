@@ -73,6 +73,15 @@
             "replacement": "function renderImage(product, size = 250) {\n  const { name } = product;\n  const { url: imageUrl, label } = product.images[0];\n\n  // Standard Commerce media URLs are not AEM Assets URLs. Render them\n  // directly instead of rewriting them into an AEM Assets delivery path,\n  // which would produce broken image links for non-AEM-Assets sources.\n  if (!imageUrl.includes('/adobe/assets/')) {\n    const fullUrl = imageUrl.startsWith('//') ? `https:${imageUrl}` : imageUrl;\n    return document.createRange().createContextualFragment(`<picture>\n      <img height=\"${size}\" width=\"${size}\" src=\"${fullUrl}\" loading=\"eager\" alt=\"${label}\" />\n    </picture>`);\n  }",
             "exit": "TODO(step-8): file PR to demo-system-stores/accs-citisignal; delete on merge",
             "critical": false
+        },
+        {
+            "id": "pdp-empty-data-redirect",
+            "target": "scripts/initializers/pdp.js",
+            "description": "Redirect a published PDP whose SKU no longer resolves to the native 404 instead of mounting an empty drop-in. The warm path: a previously-published PDP serves 200 from the content bus, so the CDN-404 smart-404 snippet never runs; fetchProductData resolves null for an unknown SKU and the initializer mounted anyway.",
+            "precondition": "  const [product, labels] = await Promise.all([\n    getProductData(true),\n    fetchPlaceholders('placeholders/pdp.json'),\n  ]);",
+            "replacement": "  const [product, labels] = await Promise.all([\n    getProductData(true),\n    fetchPlaceholders('placeholders/pdp.json'),\n  ]);\n\n  // A published PDP whose SKU no longer resolves serves 200 from the content\n  // bus, so the CDN-404 redirect never runs. fetchProductData resolves null\n  // for an unknown SKU — send the shopper to the native 404 rather than\n  // mounting an empty product block. (Demo Builder warm-path guard.)\n  if (!product && !IS_UE) {\n    return loadErrorPage();\n  }",
+            "exit": "file PR to adobe-commerce/boilerplate-b2b-template; delete on merge",
+            "critical": false
         }
     ],
     "lkgFile": "b2b/last-known-good"

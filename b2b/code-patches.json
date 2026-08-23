@@ -55,6 +55,15 @@
             "replacement": "/**\n * Activate the boilerplate's authored column layout (Demo Builder thin-layer patch).\n * The account page authors a 30%/70% split via Section Metadata (data-column-width),\n * but the boilerplate only lays sections into a row when body.columns is set and each\n * section carries the --column-width var, and nothing translates the authored attribute.\n * Feed data-column-width into --column-width and switch on body.columns so the existing\n * `body.columns main > .section { flex-basis: var(--column-width) }` rule renders the\n * sidebar layout (mobile stacks below 900px). Layout only - no styling.\n */\nfunction decorateColumnSections(main) {\n  const columns = main.querySelectorAll(':scope > .section[data-column-width]');\n  if (!columns.length) return;\n  columns.forEach((section) => {\n    section.style.setProperty('--column-width', section.dataset.columnWidth);\n  });\n  document.body.classList.add('columns');\n}\n\nexport function decorateMain(main) {\n  decorateLinks(main);\n  decorateIcons(main);\n  buildAutoBlocks(main);\n  decorateSections(main);\n  decorateColumnSections(main);\n  decorateBlocks(main);\n  decorateButtons(main);\n}",
             "exit": "TODO: file PR to hlxsites/aem-boilerplate-commerce to honor section data-column-width; delete on merge",
             "critical": false
+        },
+        {
+            "id": "pdp-empty-data-redirect",
+            "target": "scripts/initializers/pdp.js",
+            "description": "Redirect a published PDP whose SKU no longer resolves to the native 404 instead of mounting an empty drop-in. The warm path: a previously-published PDP serves 200 from the content bus, so the CDN-404 smart-404 snippet never runs; fetchProductData resolves null for an unknown SKU and the initializer mounted anyway.",
+            "precondition": "  const [product, labels] = await Promise.all([\n    getProductData(true),\n    fetchPlaceholders('placeholders/pdp.json'),\n  ]);",
+            "replacement": "  const [product, labels] = await Promise.all([\n    getProductData(true),\n    fetchPlaceholders('placeholders/pdp.json'),\n  ]);\n\n  // A published PDP whose SKU no longer resolves serves 200 from the content\n  // bus, so the CDN-404 redirect never runs. fetchProductData resolves null\n  // for an unknown SKU — send the shopper to the native 404 rather than\n  // mounting an empty product block. (Demo Builder warm-path guard.)\n  if (!product && !IS_UE) {\n    return loadErrorPage();\n  }",
+            "exit": "file PR to adobe-commerce/boilerplate-b2b-template; delete on merge",
+            "critical": false
         }
     ],
     "lkgFile": "b2b/last-known-good"
