@@ -26,7 +26,7 @@ citisignal/
 custom/
   code-patches.json         2 universal patches against canonical (header + sidebar)
 b2b/
-  code-patches.json         5 patches (universal + SKU/slash) against the B2B template
+  code-patches.json         5 patches (universal) against the B2B template
   runtime-surfaces.json     derived runtime-surface inventory + human residual (ADR-008)
   last-known-good           B2B template SHA storefronts build from
 last-known-good             default canonical SHA (hlxsites) — shared by citisignal + custom
@@ -93,39 +93,31 @@ Every patch, what it fixes, and why it's necessary. **Ledgers**: C = citisignal,
 B = b2b, U = custom. A patch in multiple ledgers is the identical
 precondition/replacement against each ledger's canonical.
 
-#### SKU URL encoding — `scripts/commerce.js` (C, B)
+#### SKU URLs — no patch (C, B)
 
-PDPs live at `/products/{urlKey}/{sku}`. Canonical slugifies the SKU into the URL
-with the lossy `sanitizeName()` and then reverse-engineers the slug back into a
-SKU on PDP load to query Commerce. That round-trip silently fails for any SKU
-with spaces, punctuation, or mixed case (Commerce returns nothing → blank PDP).
-These two patches replace it with a **reversible, lowercase-stable, Helix-path-safe**
-encoding. Clean SKUs (`[a-z0-9-]`) encode unchanged, so common catalogs see no
-URL change; only messy SKUs gain `_HH` markers. Full rationale + the ruled-out
-alternatives (`encodeURIComponent`, urlKey-resolve) are in **ADR-007** in the
-`demo-builder-vscode` repo.
+PDPs live at `/products/{urlKey}/{sku}`, and canonical's `getProductLink` cleans
+both segments with `sanitizeName()` — the same rule Helix applies to every path it
+publishes, so the link and the published page always agree. Canonical's
+`getProductSku()` reads `<meta name="sku">` first and the URL only as a fallback;
+the `render-pdp` overlay (`accs-discovery-service`) writes that tag into each
+product page at publish time. That is Adobe's own `aem-commerce-prerender`
+design, so this ledger carries nothing for it.
 
-- **`product-link-sku-encoding`** — adds the `encodeSkuForUrl` / `decodeSkuFromUrl`
-  helpers and decodes the SKU segment in `getSkuFromUrl()` before the Commerce
-  lookup.
-- **`product-link-sku-slash-encoding`** — `getProductLink()` builds links with
-  `encodeSkuForUrl(sku)` instead of `sanitizeName(sku)`. *(Id is historical — it
-  now does full reversible encoding, not just forward slashes.)*
-
-> ⚠️ **Coupling:** these two replacements mirror
-> `demo-builder-vscode/src/features/eds/services/pdpUrlEncoding.ts` **byte-for-byte**
-> — the extension builds prewarm/publish paths with that module, and a published
-> path must match the link the storefront generates. Change both together.
+There used to be two patches here (`product-link-sku-encoding`,
+`product-link-sku-slash-encoding`) that put a reversible `_HH` encoding in the URL
+instead. Helix rewrote the `_` to `-` on publish, so every SKU containing one
+404'd. They were removed with ADR-024 in the `demo-builder-vscode` repo, which
+supersedes ADR-007.
 
 #### product-teaser → canonical `getProductLink` (C)
 
 `product-teaser` is a **demo-team custom block** (lives in
 `demo-system-stores/accs-citisignal`, not in Adobe canonical or the b2b template).
 It hand-built its "Details" link via `rootLink(\`/products/${urlKey}/${sku}\`)`,
-**bypassing `getProductLink`** — so it missed the SKU encoding entirely. Rather
-than give it its own copy of the encoder, these route it through the canonical
-builder (which every Adobe product block already uses), so it inherits the
-encoding and urlKey sanitization for free.
+**bypassing `getProductLink`** — so its link kept the SKU's case and
+underscores, which Helix strips on publish, and missed the page. These route it
+through the canonical builder (which every Adobe product block already uses), so
+it builds the same Helix-clean path.
 
 - **`product-teaser-sku-encoding`** — the Details link calls
   `getProductLink(urlKey, sku)` instead of hand-building it.
