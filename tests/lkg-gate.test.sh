@@ -84,6 +84,20 @@ assert_eq "1" "$touched" "one commit since base touched the patched file"
 untouched="$(git -C "$REPO" log --oneline "${BASE_SHA}..HEAD" -- untouched/other.js | wc -l | tr -d ' ')"
 assert_eq "0" "$untouched" "no commits since base touched the unpatched file"
 
+# The B2B template re-makes its top two commits every night (its sync workflow
+# force-pushes), so the commit id changes daily while the files do not: six nights
+# in a row, 2026-10-11 to 2026-10-16, gave six ids over one tree. Moving the
+# pointer on the id would publish a release, and offer every SC an empty update,
+# every day. "Moved" means the files changed.
+echo "# canonical_moved (files, not commit ids)"
+SAME_FILES="$(git -C "$REPO" commit -q --allow-empty -m "nightly re-made commit" && git -C "$REPO" rev-parse HEAD)"
+HEAD_BEFORE="$(git -C "$REPO" rev-parse HEAD~1)"
+assert_eq "false" "$(canonical_moved "$REPO" "$HEAD_BEFORE" "$SAME_FILES")" "a new id over the same files has not moved"
+assert_eq "false" "$(canonical_moved "$REPO" "$SAME_FILES" "$SAME_FILES")" "the same id has not moved"
+assert_eq "true" "$(canonical_moved "$REPO" "$BASE_SHA" "$SAME_FILES")" "changed files have moved"
+assert_eq "true" "$(canonical_moved "$REPO" "" "$SAME_FILES")" "no previous pointer counts as moved"
+assert_eq "true" "$(canonical_moved "$REPO" "1111111111111111111111111111111111111111" "$SAME_FILES")" "an unreadable previous pointer counts as moved (as before this check)"
+
 echo ""
 echo "Passed: $PASS  Failed: $FAIL"
 [[ "$FAIL" -eq 0 ]]

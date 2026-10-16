@@ -12,7 +12,7 @@ This repo plays three roles:
 |---|---|---|
 | `*/patches.json` | Demo Builder `contentPatchRegistry` | **Content patches** — transform authored DA.live HTML during content copy |
 | `*/code-patches.json` | Demo Builder `codePatchRegistry` | **Code patches** — transform cloned-repo files during create/reset |
-| `last-known-good` + `.github/workflows/lkg-gate.yml` + `scripts/lkg-gate.sh` | The drift gate (this repo) | Track canonical, advance the LKG pointer, automate patch retirement |
+| `last-known-good` + `.github/workflows/lkg-gate.yml` + `scripts/lkg-gate.sh` | The drift gate (this repo) | Track canonical, advance the LKG pointer, publish the release Demo Builder reads, automate patch retirement |
 
 Background and rationale: **ADR-006 "Thin-Layer Storefront Customization"** in the
 `demo-builder-vscode` repo (`docs/architecture/adr/006-thin-layer-storefront-customization.md`).
@@ -181,10 +181,20 @@ classifies every patch:
 `.github/workflows/lkg-gate.yml`:
 
 - **Daily cron + manual dispatch:** run the gate. If all patches are green and
-  canonical moved, commit `chore(lkg): advance to <sha7>`. If a patch is
+  canonical's FILES moved (`canonical_moved` compares file trees, not commit ids:
+  the B2B template's own sync workflow re-makes its top two commits every night over
+  the same files, so the id alone changes daily), commit `chore(lkg): advance to <sha7>`. If a patch is
   obsolete, open a retirement PR (automation proposes; a human merges — never
   auto-delete, since upstream equivalence can be subtle). On partial pass, do
   nothing — the pointer simply stops advancing.
+- **Then, still all green: publish a release** whenever `main` has moved past the
+  latest release (`v1.1.0` → `v1.1.1`), naming the verified canonical commits.
+  Demo Builder reads the ledgers and the pointers at the **latest release**, never
+  at `main`, so this step is what carries a verified boilerplate (or a merged
+  ledger change, once a daily run has verified it) to storefronts and to Check for
+  Updates. Nobody has to cut a release by hand. Until 2026-10-16 somebody did, and
+  nobody did for seven weeks: `v1.0.0` (2026-08-28) stayed the baseline while this
+  gate verified 73 newer upstream commits.
 - **Pull requests to `main`:** run the same gate as a review-time check and fail
   the run if any precondition broke. Never advances the pointer.
 - **No notification integration** (owner preference): a red run is the signal.
@@ -224,8 +234,9 @@ the code fetches (`loadFragment('…')`, `getMetadata('nav')`, `fetchPlaceholder
   no static scan can produce.
 
 The extension consumes `runtime-surfaces.json` the same way it consumes patch
-definitions and the LKG pointer, so a merged surface-drift PR reaches storefronts on
-their next create/reset.
+definitions and the LKG pointer: at the latest release. A merged surface-drift PR
+reaches storefronts on their next create/reset after the next green daily run
+publishes a release.
 
 ## Running locally
 

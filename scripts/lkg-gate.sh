@@ -20,7 +20,7 @@
 #
 # Machine-readable outputs (for the workflow), when GITHUB_OUTPUT is set:
 #   sha=<canonical-sha>            always
-#   changed=true|false            canonical SHA differs from current last-known-good
+#   changed=true|false            canonical FILES differ from current last-known-good (canonical_moved)
 #   all_ok=true|false             every patch verified OK
 #   obsolete=<id> <id> ...        space-separated ids whose fix landed upstream
 #
@@ -110,6 +110,30 @@ ledger_canonical() {
     else
         printf '%s\n' "$CANONICAL_URL"
     fi
+}
+
+# canonical_moved <clone_dir> <prev_lkg> <sha> — echo true when the files at <sha>
+# differ from the files at <prev_lkg>, false when they are the same.
+#
+# Compares file trees, not commit ids. The B2B template's own sync workflow
+# force-pushes every night, re-making its top two commits with new ids over the
+# same files (six ids over one tree, 2026-10-11 to 2026-10-16). Moving on the id
+# would publish a release, and offer every SC an empty update, every day.
+#
+# The previous pointer is usually one of those re-made commits, gone from the
+# branch the clone fetched, so it is fetched by id. When it still cannot be read,
+# this answers true: the behaviour before the check, and never a silent freeze.
+canonical_moved() {
+    local clone_dir="$1" prev="$2" sha="$3" prev_tree new_tree
+    if [[ -z "$prev" ]]; then echo true; return; fi
+    if [[ "$prev" == "$sha" ]]; then echo false; return; fi
+    new_tree="$(git -C "$clone_dir" rev-parse --verify -q "${sha}^{tree}" 2>/dev/null || true)"
+    prev_tree="$(git -C "$clone_dir" rev-parse --verify -q "${prev}^{tree}" 2>/dev/null || true)"
+    if [[ -z "$prev_tree" ]]; then
+        git -C "$clone_dir" fetch --quiet --filter=blob:none origin "$prev" >/dev/null 2>&1 || true
+        prev_tree="$(git -C "$clone_dir" rev-parse --verify -q "${prev}^{tree}" 2>/dev/null || true)"
+    fi
+    if [[ -n "$new_tree" && "$new_tree" == "$prev_tree" ]]; then echo false; else echo true; fi
 }
 
 # ledger_lkg_file <ledger> — echo the LKG file path a ledger writes to, falling
@@ -253,13 +277,18 @@ main() {
         # Empty fields get a `-` placeholder so `read` (which collapses
         # consecutive tab delimiters) doesn't lose them — translated back
         # in the consumer loops below.
-        printf '%s\t%s\t%s\t%s\t%s\t%s\n' \
-            "$ledger" "$slug" "$sha" "${prev_lkg:--}" "$lkg_file" "$ledger_ok" \
+        local moved
+        moved="$(canonical_moved "$clone_dir" "$prev_lkg" "$sha")"
+        if [[ "$moved" == "false" && "$prev_lkg" != "$sha" ]]; then
+            echo "[lkg-gate] [$slug] ${sha:0:7} has the same files as the pointer (${prev_lkg:0:7}): a re-made commit, not a change. Not advancing." >&2
+        fi
+        printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+            "$ledger" "$slug" "$sha" "${prev_lkg:--}" "$lkg_file" "$ledger_ok" "$moved" \
             >> "$statedir/ledgers.tsv"
         printf '%s\n' "$touched" > "$statedir/touched-$slug"
 
         # Touched-file FYI per ledger (canonical moved + ledger verified).
-        if [[ -n "$prev_lkg" && "$prev_lkg" != "$sha" ]]; then
+        if [[ -n "$prev_lkg" && "$moved" == "true" ]]; then
             echo "[lkg-gate] [$slug] Canonical commits since last LKG ($prev_lkg) touching patched files:" >&2
             local uniq_targets
             uniq_targets="$(printf '%s\n' $touched | sort -u | tr '\n' ' ')"
@@ -272,17 +301,17 @@ main() {
     # Workflow outputs: first ledger un-prefixed (backward compat), all
     # ledgers also emitted with their slug for multi-canonical routing.
     local first=1
-    while IFS=$'\t' read -r ledger slug sha prev_lkg lkg_file ledger_ok; do
+    while IFS=$'\t' read -r ledger slug sha prev_lkg lkg_file ledger_ok moved; do
         # Translate `-` placeholder back to empty.
         [[ "$prev_lkg" == "-" ]] && prev_lkg=""
         if [[ "$first" -eq 1 ]]; then
             emit_output "sha" "$sha"
-            emit_output "changed" "$([[ "$prev_lkg" != "$sha" ]] && echo true || echo false)"
+            emit_output "changed" "$moved"
             emit_output "all_ok" "$([[ "$ledger_ok" -eq 1 ]] && echo true || echo false)"
             first=0
         fi
         emit_output "sha_$slug" "$sha"
-        emit_output "changed_$slug" "$([[ "$prev_lkg" != "$sha" ]] && echo true || echo false)"
+        emit_output "changed_$slug" "$moved"
         emit_output "all_ok_$slug" "$([[ "$ledger_ok" -eq 1 ]] && echo true || echo false)"
         emit_output "lkg_file_$slug" "$lkg_file"
     done < "$statedir/ledgers.tsv"
@@ -295,10 +324,8 @@ main() {
         local n_ledgers
         n_ledgers="$(wc -l < "$statedir/ledgers.tsv" | tr -d ' ')"
         echo "[lkg-gate] All patches verified across $n_ledgers ledger(s):" >&2
-        while IFS=$'\t' read -r ledger slug sha prev_lkg lkg_file ledger_ok; do
+        while IFS=$'\t' read -r ledger slug sha prev_lkg lkg_file ledger_ok moved; do
             [[ "$prev_lkg" == "-" ]] && prev_lkg=""
-            local moved="false"
-            [[ "$prev_lkg" != "$sha" ]] && moved="true"
             echo "    $ledger @ ${sha:0:7} → $lkg_file (moved: $moved)" >&2
             # Write LKG file if requested AND the canonical moved. Skipped in
             # local dry-runs (developer testing) — gate runs read-only by

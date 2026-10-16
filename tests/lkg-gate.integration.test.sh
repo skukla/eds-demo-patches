@@ -103,6 +103,34 @@ ERR="$(cat "$TMP/stderr")"
 assert_contains "$ERR" "✓ healthy-patch" "healthy patch reported OK"
 assert_contains "$ERR" "OBSOLETE: obsolete-patch" "obsolete patch flagged"
 
+# --- A green night over a re-made commit: same files, new id ------------------
+# The B2B template's sync re-makes its top commits nightly. The gate must not
+# move the pointer (and so not publish a release) when only the id changed.
+echo "# green run over a re-made commit"
+CANON2="$TMP/canonical2"
+mkdir -p "$CANON2/scripts"
+git -C "$CANON2" init -q
+git -C "$CANON2" config user.email t@t.t
+git -C "$CANON2" config user.name t
+printf 'before\nconst HEALTHY = makeThing();\nafter\n' > "$CANON2/scripts/healthy.js"
+git -C "$CANON2" add -A && git -C "$CANON2" commit -qm base
+POINTER="$(git -C "$CANON2" rev-parse HEAD)"
+git -C "$CANON2" commit -q --allow-empty -m "nightly re-made commit"
+ROOT2="$TMP/root2"
+mkdir -p "$ROOT2/citisignal"
+jq '.patches |= map(select(.id == "healthy-patch"))' "$ROOT/citisignal/code-patches.json" > "$ROOT2/citisignal/code-patches.json"
+echo "$POINTER" > "$ROOT2/last-known-good"
+OUTFILE2="$TMP/gh_output2"
+: > "$OUTFILE2"
+set +e
+( cd "$ROOT2" && CANONICAL_DIR="$CANON2" BLOCK_DIR="$BLOCKS" GITHUB_OUTPUT="$OUTFILE2" WRITE_LKG=1 bash "$GATE" > "$TMP/stdout2" 2> "$TMP/stderr2" )
+RC2=$?
+set -e
+assert_eq "0" "$RC2" "a green run exits zero"
+assert_contains "$(cat "$OUTFILE2")" "changed=false" "the pointer has not moved: same files"
+assert_eq "$POINTER" "$(tr -d '[:space:]' < "$ROOT2/last-known-good")" "the pointer file is left as it was"
+assert_contains "$(cat "$TMP/stderr2")" "a re-made commit, not a change" "the log says why it did not advance"
+
 echo ""
 echo "Passed: $PASS  Failed: $FAIL"
 [[ "$FAIL" -eq 0 ]]

@@ -84,6 +84,44 @@ jobs:
           per-canonical SHA advances."
           git push
 
+      - name: Publish a release when main has moved past the latest one
+        # Cron/dispatch only, all patches green. Demo Builder reads the ledgers and
+        # the LKG pointers at this repo's LATEST RELEASE (one snapshot, both
+        # together), so a verified `main` nobody releases never reaches a
+        # storefront. Until 2026-10-16 this step did not exist: v1.0.0 was the only
+        # release for seven weeks, and every project started on, and compared its
+        # updates against, the 2026-08-28 boilerplate while this gate verified 73
+        # newer commits. Comparing HEAD with the latest release (rather than "did
+        # the pointer move") also releases a merged ledger change, once a daily
+        # run has verified it.
+        if: >-
+          github.event_name != 'pull_request' &&
+          steps.gate.outputs.all_ok == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          head="$(git rev-parse HEAD)"
+          latest="$(gh release view --repo "$GITHUB_REPOSITORY" --json tagName --jq .tagName 2>/dev/null || true)"
+          if [ -n "$latest" ]; then
+            released="$(gh api "repos/$GITHUB_REPOSITORY/commits/$latest" --jq .sha)"
+            if [ "$released" = "$head" ]; then
+              echo "main is already released as $latest — nothing to publish."
+              exit 0
+            fi
+            IFS=. read -r major minor patch <<< "${latest#v}"
+            next="v${major}.${minor}.$((patch + 1))"
+          else
+            next="v1.0.0"
+          fi
+          notes="$(printf 'Published by the daily drift gate: every patch verified against canonical.\n\nVerified canonical commits (last-known-good):\n')"
+          for f in last-known-good */last-known-good; do
+            [ -e "$f" ] && notes="${notes}"$'\n'"- \`${f}\`: \`$(cat "$f")\`"
+          done
+          gh release create "$next" --repo "$GITHUB_REPOSITORY" --target "$head" \
+            --title "$next" --notes "$notes" --latest
+          echo "Published $next at $head."
+
       - name: Open retirement PRs for obsolete patches
         # Cron/dispatch only. The gate flagged patches whose fix appears to have
         # landed upstream (precondition gone, replacement present). Propose
