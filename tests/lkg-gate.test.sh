@@ -53,6 +53,11 @@ assert_eq "OK" "$(classify_patch "$TMP/present.js" "$PRECOND" "$REPLACEMENT")" "
 assert_eq "MULTI_MATCH" "$(classify_patch "$TMP/twice.js" "$PRECOND" "$REPLACEMENT")" "precondition present twice -> MULTI_MATCH"
 assert_eq "OBSOLETE" "$(classify_patch "$TMP/obsolete.js" "$PRECOND" "$REPLACEMENT")" "obsolete true-positive (replacement present) -> OBSOLETE"
 assert_eq "FIXED_DIFFERENTLY" "$(classify_patch "$TMP/different.js" "$PRECOND" "$REPLACEMENT")" "obsolete true-negative (replacement absent) -> FIXED_DIFFERENTLY"
+# Upstream re-wrapped the precondition over different lines: same code, new
+# whitespace. The gate proposes the new anchor instead of calling for a person.
+printf 'header\n%s\nfooter\n' "$(printf '%s' "$PRECOND" | sed 's/^  //')" > "$TMP/rewrapped.js"
+assert_eq "REANCHORABLE" "$(classify_patch "$TMP/rewrapped.js" "$PRECOND" "$REPLACEMENT")" "precondition re-indented upstream -> REANCHORABLE"
+assert_eq "$(printf '%s' "$PRECOND" | sed 's/^  //')" "$(reanchored_text "$TMP/rewrapped.js" "$PRECOND")" "the proposed anchor is the file's own text"
 assert_eq "MISSING" "$(classify_patch "" "$PRECOND" "$REPLACEMENT")" "empty target -> MISSING"
 assert_eq "MISSING" "$(classify_patch "$TMP/does-not-exist.js" "$PRECOND" "$REPLACEMENT")" "nonexistent target -> MISSING"
 

@@ -11,6 +11,10 @@
 #   - precondition matches uniquely         -> OK
 #   - precondition gone, replacement present -> OBSOLETE (fix landed upstream;
 #                                               workflow opens a retirement PR)
+#   - precondition gone, but present once if whitespace is ignored
+#                                            -> REANCHORABLE (only formatting moved;
+#                                               the workflow opens a PR with the new
+#                                               anchor, scripts/reanchor.mjs)
 #   - precondition gone, replacement absent  -> FIXED_DIFFERENTLY (human triage)
 #   - precondition matches >1 time           -> MULTI_MATCH (unsafe first-match;
 #                                               fail so the anchor is tightened)
@@ -22,7 +26,10 @@
 #   sha=<canonical-sha>            always
 #   changed=true|false            canonical FILES differ from current last-known-good (canonical_moved)
 #   all_ok=true|false             every patch verified OK
-#   obsolete=<id> <id> ...        space-separated ids whose fix landed upstream
+#   obsolete=<ledger>:<id> ...    patches whose fix landed upstream, per ledger (a
+#                                 patch shared by ledgers on two canonicals may be
+#                                 fixed in only one)
+#   reanchor=<ledger>:<id> ...    patches whose new anchor is in .lkg-proposals/reanchor/
 #
 # The pure functions below (count_occurrences, classify_patch, resolve_target)
 # are sourced by tests/lkg-gate.test.sh without running main().
@@ -34,6 +41,9 @@ CANONICAL_BRANCH="${CANONICAL_BRANCH:-main}"
 BLOCK_SOURCE_URL="${BLOCK_SOURCE_URL:-https://github.com/demo-system-stores/accs-citisignal.git}"
 BLOCK_SOURCE_BRANCH="${BLOCK_SOURCE_BRANCH:-main}"
 LKG_FILE="${LKG_FILE:-last-known-good}"
+# Where the gate writes what it proposes (new anchors), relative to the repo root it
+# runs in. Git-ignored; the workflow turns each proposal into a pull request.
+PROPOSALS_DIR="${PROPOSALS_DIR:-.lkg-proposals}"
 
 # Directories holding the checked-out source trees. main() sets these to the
 # clones; tests set them to fixtures.
@@ -68,7 +78,7 @@ resolve_target() {
 }
 
 # classify_patch <file> <precondition> <replacement> — the core decision. Echo
-# one of: OK | OBSOLETE | FIXED_DIFFERENTLY | MULTI_MATCH | MISSING.
+# one of: OK | OBSOLETE | REANCHORABLE | FIXED_DIFFERENTLY | MULTI_MATCH | MISSING.
 classify_patch() {
     local file="$1" precond="$2" replacement="$3"
     if [[ -z "$file" || ! -f "$file" ]]; then
@@ -86,10 +96,20 @@ classify_patch() {
         rc=$(count_occurrences "$file" "$replacement")
         if [[ "$rc" -ge 1 ]]; then
             printf 'OBSOLETE\n'
+        elif reanchored_text "$file" "$precond" >/dev/null; then
+            printf 'REANCHORABLE\n'
         else
             printf 'FIXED_DIFFERENTLY\n'
         fi
     fi
+}
+
+# reanchored_text <file> <precondition> — print the file's exact text for the
+# precondition when the two differ only in whitespace, exactly once; exit 1 (and
+# print nothing) otherwise, or when node is unavailable.
+reanchored_text() {
+    command -v node >/dev/null 2>&1 || return 1
+    printf '%s' "$2" | node "$SCRIPT_SELF_DIR/reanchor.mjs" "$1"
 }
 
 # emit_output <key> <value> — append a key=value line to GITHUB_OUTPUT if set.
@@ -189,6 +209,7 @@ main() {
 
     local all_ok_global=1
     local -a obsolete_ids=()
+    local -a reanchor_ids=()
     local ledger
     for ledger in ./*/code-patches.json; do
         [[ -e "$ledger" ]] || continue
@@ -229,9 +250,17 @@ main() {
                 OK)
                     echo "  ✓ $id ($target)" >&2
                     ;;
+                REANCHORABLE)
+                    echo "  ↻ REANCHORABLE: $id — only whitespace moved in $target; proposing the new anchor for a PR." >&2
+                    mkdir -p "$PROPOSALS_DIR/reanchor"
+                    reanchored_text "$file" "$precond" > "$PROPOSALS_DIR/reanchor/$(basename "$(dirname "$ledger")")__${id}.txt"
+                    reanchor_ids+=("$(basename "$(dirname "$ledger")"):$id")
+                    ledger_ok=0
+                    all_ok_global=0
+                    ;;
                 OBSOLETE)
                     echo "  ⚠ OBSOLETE: $id — replacement already present in $target; fix appears to have landed upstream. Retirement PR candidate." >&2
-                    obsolete_ids+=("$id")
+                    obsolete_ids+=("$(basename "$(dirname "$ledger")"):$id")
                     ledger_ok=0
                     all_ok_global=0
                     ;;
@@ -318,6 +347,9 @@ main() {
 
     if [[ "${#obsolete_ids[@]}" -gt 0 ]]; then
         emit_output "obsolete" "${obsolete_ids[*]}"
+    fi
+    if [[ "${#reanchor_ids[@]}" -gt 0 ]]; then
+        emit_output "reanchor" "${reanchor_ids[*]}"
     fi
 
     if [[ "$all_ok_global" -eq 1 ]]; then

@@ -122,10 +122,14 @@ jobs:
             --title "$next" --notes "$notes" --latest
           echo "Published $next at $head."
 
-      - name: Open retirement PRs for obsolete patches
-        # Cron/dispatch only. The gate flagged patches whose fix appears to have
-        # landed upstream (precondition gone, replacement present). Propose
-        # removal; a human merges (never auto-delete — equivalence can be subtle).
+      - name: Retire patches upstream now ships byte for byte
+        # Cron/dispatch only. The gate flagged patches whose precondition is gone
+        # and whose replacement is present EXACTLY: upstream ships the very code the
+        # patch wrote. Open a PR removing it from that one ledger, and merge it
+        # (owner, 2026-10-16): removing it changes no storefront byte. Until then a
+        # human merged these, because equivalence "can be subtle"; an exact match is
+        # not subtle, and a fix made differently is FIXED_DIFFERENTLY, which still
+        # waits for a person.
         if: >-
           github.event_name != 'pull_request' &&
           steps.gate.outputs.obsolete != ''
@@ -134,38 +138,97 @@ jobs:
         run: |
           set -euo pipefail
           base="$(git rev-parse --abbrev-ref HEAD)"
-          for id in ${{ steps.gate.outputs.obsolete }}; do
-            branch="lkg/retire-${id}"
+          for entry in ${{ steps.gate.outputs.obsolete }}; do
+            ledger_dir="${entry%%:*}"
+            id="${entry#*:}"
+            branch="lkg/retire-${ledger_dir}-${id}"
             # Skip if a retirement PR for this patch is already open.
             if gh pr list --head "$branch" --state open --json number --jq 'length' | grep -q '^[1-9]'; then
-              echo "Retirement PR for '$id' already open — skipping."
+              echo "Retirement PR for '$entry' already open — skipping."
               continue
             fi
             git checkout -B "$branch" "$base"
-            for ledger in */code-patches.json; do
-              [ -e "$ledger" ] || continue
-              tmp="$(mktemp)"
-              jq --arg id "$id" '.patches |= map(select(.id != $id))' "$ledger" > "$tmp"
-              mv "$tmp" "$ledger"
-            done
+            # Only the ledger whose canonical now has the fix: a patch shared by
+            # ledgers on two canonicals may be fixed in only one of them.
+            ledger="${ledger_dir}/code-patches.json"
+            tmp="$(mktemp)"
+            jq --arg id "$id" '.patches |= map(select(.id != $id))' "$ledger" > "$tmp"
+            mv "$tmp" "$ledger"
             git config user.name 'github-actions[bot]'
             git config user.email 'github-actions[bot]@users.noreply.github.com'
-            git add ./*/code-patches.json
+            git add "$ledger"
             if git diff --cached --quiet; then
-              echo "No ledger change for '$id' — skipping."
+              echo "No ledger change for '$entry' — skipping."
+              git checkout -q "$base"
               continue
             fi
-            git commit -m "chore(lkg): retire obsolete patch '${id}'"
+            git commit -m "chore(lkg): retire obsolete patch '${id}' from ${ledger_dir}"
             git push -u origin "$branch" --force-with-lease
             gh pr create \
               --base "$base" \
               --head "$branch" \
-              --title "chore(lkg): retire obsolete patch '${id}'" \
-              --body "The daily drift gate found that \`${id}\`'s precondition no longer matches canonical, **and** its replacement is already present — the fix appears to have landed upstream, making the patch obsolete.
+              --title "chore(lkg): retire obsolete patch '${id}' from ${ledger_dir}" \
+              --body "The daily drift gate found that \`${id}\`'s precondition no longer matches canonical, **and** its replacement is already present, byte for byte — upstream now ships exactly the code this patch wrote, so the patch has nothing left to do.
 
-          Automation proposes removal; a human should confirm the upstream fix is truly equivalent before merging (per ADR-006: never auto-delete).
+          Merged automatically (owner, 2026-10-16): OBSOLETE means the replacement text is present EXACTLY, so removing the patch changes no storefront byte. A fix upstream made differently is FIXED_DIFFERENTLY instead and still waits for a person.
 
           Verified canonical SHA: \`${{ steps.gate.outputs.sha }}\`"
+            gh pr merge "$branch" --squash --delete-branch
+            git checkout -q "$base"
+            git pull -q --ff-only
+          done
+
+      - name: Open re-anchor PRs for patches upstream only reformatted
+        # Cron/dispatch only. The gate found patches whose precondition is still in
+        # canonical once whitespace is ignored (re-indented, re-wrapped) and wrote
+        # the file's exact new text to .lkg-proposals/reanchor/<ledger>__<id>.txt
+        # (scripts/reanchor.mjs). Propose the ledger update; a human merges for now.
+        # (A PR opened with this workflow's token runs no other workflow, so the
+        # PR-time gate does not run on it; the new anchor matches exactly once in
+        # canonical by construction.)
+        if: >-
+          github.event_name != 'pull_request' &&
+          steps.gate.outputs.reanchor != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          base="$(git rev-parse --abbrev-ref HEAD)"
+          for entry in ${{ steps.gate.outputs.reanchor }}; do
+            ledger_dir="${entry%%:*}"
+            id="${entry#*:}"
+            proposal=".lkg-proposals/reanchor/${ledger_dir}__${id}.txt"
+            branch="lkg/reanchor-${ledger_dir}-${id}"
+            if gh pr list --head "$branch" --state open --json number --jq 'length' | grep -q '^[1-9]'; then
+              echo "Re-anchor PR for '$entry' already open — skipping."
+              continue
+            fi
+            git checkout -B "$branch" "$base"
+            ledger="${ledger_dir}/code-patches.json"
+            tmp="$(mktemp)"
+            jq --arg id "$id" --rawfile pre "$proposal" \
+              '.patches |= map(if .id == $id then .precondition = $pre else . end)' "$ledger" > "$tmp"
+            mv "$tmp" "$ledger"
+            git config user.name 'github-actions[bot]'
+            git config user.email 'github-actions[bot]@users.noreply.github.com'
+            git add "$ledger"
+            if git diff --cached --quiet; then
+              echo "No ledger change for '$entry' — skipping."
+              git checkout -q "$base"
+              continue
+            fi
+            git commit -m "chore(lkg): re-anchor '${id}' in ${ledger_dir} (upstream reformatted it)"
+            git push -u origin "$branch" --force-with-lease
+            gh pr create \
+              --base "$base" \
+              --head "$branch" \
+              --title "chore(lkg): re-anchor '${id}' in ${ledger_dir}" \
+              --body "Upstream changed only the whitespace inside the code \`${id}\` patches (re-indented or re-wrapped), so the patch no longer fit as written. This updates its precondition to canonical's exact new text; the replacement is unchanged.
+
+          Found by \`scripts/reanchor.mjs\`: the same sequence of code, differing only in whitespace, exactly once in the target file. Its one known limit: spacing inside a string literal counts as whitespace. Merge it, and the next daily run verifies every patch and publishes the release.
+
+          Canonical SHA: \`${{ steps.gate.outputs.sha }}\`"
+            git checkout -q "$base"
           done
 
       - name: Open PR for runtime-surface drift

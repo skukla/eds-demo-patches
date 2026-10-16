@@ -173,8 +173,9 @@ classifies every patch:
 | Classification | Meaning | Gate action |
 |---|---|---|
 | **OK** | precondition matches uniquely | green |
-| **OBSOLETE** | precondition gone, replacement already present (fix landed upstream) | red; open a retirement PR |
-| **FIXED_DIFFERENTLY** | precondition gone, replacement absent | red; log region for human triage |
+| **OBSOLETE** | precondition gone, replacement already present byte for byte (upstream ships our exact fix) | red; remove the patch from that ledger and merge it |
+| **REANCHORABLE** | precondition gone, but present exactly once if only whitespace is normalised (upstream reformatted it) | red; open a PR with the new anchor (`scripts/reanchor.mjs`) |
+| **FIXED_DIFFERENTLY** | precondition gone, replacement absent, no whitespace-only match | red; log region for human triage |
 | **MULTI_MATCH** | precondition matches more than once (unsafe) | red; tighten the anchor |
 | **MISSING** | target absent in both clones | red |
 
@@ -183,10 +184,13 @@ classifies every patch:
 - **Daily cron + manual dispatch:** run the gate. If all patches are green and
   canonical's FILES moved (`canonical_moved` compares file trees, not commit ids:
   the B2B template's own sync workflow re-makes its top two commits every night over
-  the same files, so the id alone changes daily), commit `chore(lkg): advance to <sha7>`. If a patch is
-  obsolete, open a retirement PR (automation proposes; a human merges — never
-  auto-delete, since upstream equivalence can be subtle). On partial pass, do
-  nothing — the pointer simply stops advancing.
+  the same files, so the id alone changes daily), commit `chore(lkg): advance to <sha7>`. If upstream
+  now ships a patch's replacement byte for byte, remove that patch from THAT
+  ledger only (a patch shared by ledgers on two canonicals may be fixed in one)
+  and merge it: it changes no storefront byte. If upstream only reformatted a
+  patched region, open a PR with the new anchor for a person to merge. A real
+  change (FIXED_DIFFERENTLY) waits for a person. On any non-green patch, the
+  pointer does not advance and no release is published.
 - **Then, still all green: publish a release** whenever `main` has moved past the
   latest release (`v1.1.0` → `v1.1.1`), naming the verified canonical commits.
   Demo Builder reads the ledgers and the pointers at the **latest release**, never
@@ -198,6 +202,13 @@ classifies every patch:
 - **Pull requests to `main`:** run the same gate as a review-time check and fail
   the run if any precondition broke. Never advances the pointer.
 - **No notification integration** (owner preference): a red run is the signal.
+- **Repo setting this needs:** "Allow GitHub Actions to create and approve pull
+  requests" (Settings, Actions, General). Without it every PR the workflow opens
+  fails. Checked 2026-10-16: it was off, so no retirement or surface-drift PR
+  could have opened; none had been needed yet.
+- **A PR this workflow opens runs no other workflow** (GitHub's rule for its own
+  token), so the PR-time gate does not check it. The re-anchor is safe by
+  construction: the new anchor matches exactly once in canonical.
 
 ## The runtime-surface drift check (ADR-008)
 
@@ -247,7 +258,8 @@ bash scripts/lkg-gate.sh
 
 # Tests (offline, no network):
 bash tests/lkg-gate.test.sh              # unit: classification + resolution
-bash tests/lkg-gate.integration.test.sh  # main() flow incl. obsolete detection
+bash tests/lkg-gate.integration.test.sh  # main() flow incl. obsolete detection and re-anchoring
+node --test scripts/reanchor.test.mjs    # unit: whitespace-only re-anchoring
 node --test scripts/derive-surfaces.test.mjs  # unit: surface derivation + drift diff
 
 # Runtime-surface check against a local boilerplate clone (ADR-008):

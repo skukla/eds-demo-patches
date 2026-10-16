@@ -96,7 +96,7 @@ echo "# GITHUB_OUTPUT contents"
 OUT="$(cat "$OUTFILE")"
 assert_contains "$OUT" "all_ok=false" "all_ok is false"
 assert_contains "$OUT" "changed=true" "changed is true (canonical moved vs prev LKG)"
-assert_contains "$OUT" "obsolete=obsolete-patch" "obsolete id is emitted for the workflow"
+assert_contains "$OUT" "obsolete=citisignal:obsolete-patch" "obsolete patch is emitted with its ledger, so removal touches only that ledger"
 
 echo "# stderr classification"
 ERR="$(cat "$TMP/stderr")"
@@ -130,6 +130,31 @@ assert_eq "0" "$RC2" "a green run exits zero"
 assert_contains "$(cat "$OUTFILE2")" "changed=false" "the pointer has not moved: same files"
 assert_eq "$POINTER" "$(tr -d '[:space:]' < "$ROOT2/last-known-good")" "the pointer file is left as it was"
 assert_contains "$(cat "$TMP/stderr2")" "a re-made commit, not a change" "the log says why it did not advance"
+
+# --- Upstream reformatted a patched line: the gate proposes the new anchor ------
+echo "# re-anchor proposal"
+CANON3="$TMP/canonical3"
+mkdir -p "$CANON3/scripts"
+git -C "$CANON3" init -q
+git -C "$CANON3" config user.email t@t.t
+git -C "$CANON3" config user.name t
+# The healthy patch's precondition, re-spaced the way a formatter might.
+printf 'before\nconst HEALTHY  =  makeThing();\nafter\n' > "$CANON3/scripts/healthy.js"
+git -C "$CANON3" add -A && git -C "$CANON3" commit -qm base
+ROOT3="$TMP/root3"
+mkdir -p "$ROOT3/citisignal"
+cp "$ROOT2/citisignal/code-patches.json" "$ROOT3/citisignal/code-patches.json"
+echo "$POINTER" > "$ROOT3/last-known-good"
+OUTFILE3="$TMP/gh_output3"
+: > "$OUTFILE3"
+set +e
+( cd "$ROOT3" && CANONICAL_DIR="$CANON3" BLOCK_DIR="$BLOCKS" GITHUB_OUTPUT="$OUTFILE3" WRITE_LKG=1 bash "$GATE" > /dev/null 2> "$TMP/stderr3" )
+RC3=$?
+set -e
+assert_eq "1" "$RC3" "a patch that does not fit as written keeps the run red (no release)"
+assert_contains "$(cat "$OUTFILE3")" "reanchor=citisignal:healthy-patch" "the workflow is told which patch to re-anchor"
+assert_eq "const HEALTHY  =  makeThing();" "$(cat "$ROOT3/.lkg-proposals/reanchor/citisignal__healthy-patch.txt")" "the proposal holds the file's exact new text"
+assert_eq "$POINTER" "$(tr -d '[:space:]' < "$ROOT3/last-known-good")" "the pointer does not move"
 
 echo ""
 echo "Passed: $PASS  Failed: $FAIL"

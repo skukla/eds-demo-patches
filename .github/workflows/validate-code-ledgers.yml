@@ -40,5 +40,14 @@ jobs:
       - name: Unit tests for the validator
         run: node --test scripts/validate-code-ledgers.test.mjs
 
+      - name: Tests for the drift gate (offline, seconds)
+        # The gate runs unattended every day and decides what reaches storefronts;
+        # until 2026-10-16 none of its tests ran anywhere but a laptop.
+        run: |
+          node --test scripts/reanchor.test.mjs
+          node --test scripts/derive-surfaces.test.mjs
+          bash tests/lkg-gate.test.sh
+          bash tests/lkg-gate.integration.test.sh
+
       - name: Validate every code ledger
         run: node scripts/validate-code-ledgers.mjs .
