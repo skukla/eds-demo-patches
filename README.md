@@ -204,8 +204,8 @@ classifies every patch:
 - **No notification integration** (owner preference): a red run is the signal.
 - **Repo setting this needs:** "Allow GitHub Actions to create and approve pull
   requests" (Settings, Actions, General). Without it every PR the workflow opens
-  fails. Checked 2026-10-16: it was off, so no retirement or surface-drift PR
-  could have opened; none had been needed yet.
+  fails. It was off until 2026-10-16 (so no retirement or surface-drift PR could
+  have opened; none had been needed yet) and was turned on that day (owner).
 - **A PR this workflow opens runs no other workflow** (GitHub's rule for its own
   token), so the PR-time gate does not check it. The re-anchor is safe by
   construction: the new anchor matches exactly once in canonical.
