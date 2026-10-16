@@ -156,6 +156,27 @@ assert_contains "$(cat "$OUTFILE3")" "reanchor=citisignal:healthy-patch" "the wo
 assert_eq "const HEALTHY  =  makeThing();" "$(cat "$ROOT3/.lkg-proposals/reanchor/citisignal__healthy-patch.txt")" "the proposal holds the file's exact new text"
 assert_eq "$POINTER" "$(tr -d '[:space:]' < "$ROOT3/last-known-good")" "the pointer does not move"
 
+# --- all_ok is the WHOLE run, not the first ledger -----------------------------
+# Found by the 2026-10-16 live test in a scratch repo: with the first ledger green
+# and a later one red, all_ok said true, so the run never went red and the release
+# step (which keys on all_ok) could publish. The ledgers sort a-z: "a-first" is
+# checked before "z-second".
+echo "# all_ok covers every ledger"
+ROOT5="$TMP/root5"
+mkdir -p "$ROOT5/a-first" "$ROOT5/z-second"
+jq '.patches |= map(select(.id == "healthy-patch"))' "$ROOT/citisignal/code-patches.json" > "$ROOT5/a-first/code-patches.json"
+jq '.patches |= map(select(.id == "obsolete-patch"))' "$ROOT/citisignal/code-patches.json" > "$ROOT5/z-second/code-patches.json"
+echo "0000000000000000000000000000000000000000" > "$ROOT5/last-known-good"
+OUTFILE5="$TMP/gh_output5"
+: > "$OUTFILE5"
+set +e
+( cd "$ROOT5" && CANONICAL_DIR="$CANON" BLOCK_DIR="$BLOCKS" GITHUB_OUTPUT="$OUTFILE5" bash "$GATE" > /dev/null 2>&1 )
+RC5=$?
+set -e
+assert_eq "1" "$RC5" "a red later ledger fails the gate"
+assert_contains "$(cat "$OUTFILE5")" "all_ok=false" "all_ok is false when any ledger is red, not just the first"
+assert_contains "$(cat "$OUTFILE5")" "all_ok_" "per-ledger results are still emitted"
+
 echo ""
 echo "Passed: $PASS  Failed: $FAIL"
 [[ "$FAIL" -eq 0 ]]

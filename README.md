@@ -173,7 +173,7 @@ classifies every patch:
 | Classification | Meaning | Gate action |
 |---|---|---|
 | **OK** | precondition matches uniquely | green |
-| **OBSOLETE** | precondition gone, replacement already present byte for byte (upstream ships our exact fix) | red; remove the patch from that ledger and merge it |
+| **OBSOLETE** | precondition gone, replacement already present byte for byte (upstream ships our exact fix) | red; remove the patch from that ledger, as a commit straight to main |
 | **REANCHORABLE** | precondition gone, but present exactly once if only whitespace is normalised (upstream reformatted it) | red; open a PR with the new anchor (`scripts/reanchor.mjs`) |
 | **FIXED_DIFFERENTLY** | precondition gone, replacement absent, no whitespace-only match | red; log region for human triage |
 | **MULTI_MATCH** | precondition matches more than once (unsafe) | red; tighten the anchor |
@@ -187,7 +187,7 @@ classifies every patch:
   the same files, so the id alone changes daily), commit `chore(lkg): advance to <sha7>`. If upstream
   now ships a patch's replacement byte for byte, remove that patch from THAT
   ledger only (a patch shared by ledgers on two canonicals may be fixed in one)
-  and merge it: it changes no storefront byte. If upstream only reformatted a
+  as a commit straight to main: it changes no storefront byte. If upstream only reformatted a
   patched region, open a PR with the new anchor for a person to merge. A real
   change (FIXED_DIFFERENTLY) waits for a person. On any non-green patch, the
   pointer does not advance and no release is published.
@@ -206,9 +206,18 @@ classifies every patch:
   requests" (Settings, Actions, General). Without it every PR the workflow opens
   fails. It was off until 2026-10-16 (so no retirement or surface-drift PR could
   have opened; none had been needed yet) and was turned on that day (owner).
-- **A PR this workflow opens runs no other workflow** (GitHub's rule for its own
-  token), so the PR-time gate does not check it. The re-anchor is safe by
-  construction: the new anchor matches exactly once in canonical.
+- **A PR this workflow opens queues its checks, but GitHub holds them** until a
+  maintainer presses "Approve and run" on the PR. The re-anchor matches exactly
+  once in canonical by construction; approving the check is how a person sees it
+  verified before merging. Merge without approving and the held checks fail once
+  the branch is deleted, which sends a failure email for a run that never ran.
+- **Proven end to end on 2026-10-16** in two throwaway repos (a copy of this one
+  and of the B2B template, with one line reformatted and one fix shipped
+  verbatim): the exact fix was retired from just the two B2B ledgers, re-anchor
+  PRs opened, merging them turned the next run green and published a release,
+  and a run with nothing new published nothing. The test also found `all_ok`
+  reporting only the FIRST ledger (fixed) and removal PRs whose queued checks
+  failed on a deleted branch and emailed the owner (removal is now a commit).
 
 ## The runtime-surface drift check (ADR-008)
 

@@ -25,7 +25,7 @@
 # Machine-readable outputs (for the workflow), when GITHUB_OUTPUT is set:
 #   sha=<canonical-sha>            always
 #   changed=true|false            canonical FILES differ from current last-known-good (canonical_moved)
-#   all_ok=true|false             every patch verified OK
+#   all_ok=true|false             every patch in EVERY ledger verified OK
 #   obsolete=<ledger>:<id> ...    patches whose fix landed upstream, per ledger (a
 #                                 patch shared by ledgers on two canonicals may be
 #                                 fixed in only one)
@@ -336,7 +336,6 @@ main() {
         if [[ "$first" -eq 1 ]]; then
             emit_output "sha" "$sha"
             emit_output "changed" "$moved"
-            emit_output "all_ok" "$([[ "$ledger_ok" -eq 1 ]] && echo true || echo false)"
             first=0
         fi
         emit_output "sha_$slug" "$sha"
@@ -344,6 +343,11 @@ main() {
         emit_output "all_ok_$slug" "$([[ "$ledger_ok" -eq 1 ]] && echo true || echo false)"
         emit_output "lkg_file_$slug" "$lkg_file"
     done < "$statedir/ledgers.tsv"
+
+    # all_ok is the WHOLE run. It used to be the first ledger's result, so a red
+    # later ledger left it true: the run never went red, and the release step,
+    # which keys on it, could publish (found by the 2026-10-16 live test).
+    emit_output "all_ok" "$([[ "$all_ok_global" -eq 1 ]] && echo true || echo false)"
 
     if [[ "${#obsolete_ids[@]}" -gt 0 ]]; then
         emit_output "obsolete" "${obsolete_ids[*]}"
