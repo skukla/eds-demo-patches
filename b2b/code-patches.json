@@ -6,8 +6,8 @@
             "id": "header-nav-tools-defensive",
             "target": "blocks/header/header.js",
             "description": "Make header.js defensive when the nav-tools section is missing (DA.live strips empty divs), preventing a null-reference crash.",
-            "precondition": "const navTools = block.querySelector('.nav-tools-section');",
-            "replacement": "let navTools = block.querySelector('.nav-tools-section');\n\n  // Create the nav-tools section if it is missing. DA.live strips empty\n  // divs during content processing, leaving nav with only 2 sections\n  // (brand, sections) instead of 3 — without this guard header.js throws\n  // \"Cannot read properties of null\".\n  if (!navTools) {\n    navTools = document.createElement('div');\n    navTools.classList.add('nav-tools');\n    nav.appendChild(navTools);\n  }",
+            "precondition": "const navTools = nav.querySelector('.nav-tools');",
+            "replacement": "let navTools = nav.querySelector('.nav-tools');\n\n  // Create the nav-tools section if it is missing. DA.live strips empty\n  // divs during content processing, leaving nav with only 2 sections\n  // (brand, sections) instead of 3 — without this guard header.js throws\n  // \"Cannot read properties of null\".\n  if (!navTools) {\n    navTools = document.createElement('div');\n    navTools.classList.add('nav-tools');\n    nav.appendChild(navTools);\n  }",
             "exit": "Retires when Adobe fixes this itself: the daily gate then finds the replacement already present and opens a removal PR. Not filed upstream (owner, 2026-10-16).",
             "critical": false
         },
