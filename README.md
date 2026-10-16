@@ -175,7 +175,7 @@ classifies every patch:
 | **OK** | precondition matches uniquely | green |
 | **OBSOLETE** | precondition gone, replacement already present byte for byte (upstream ships our exact fix) | red; remove the patch from that ledger, as a commit straight to main |
 | **REANCHORABLE** | precondition gone, but present exactly once if only whitespace is normalised (upstream reformatted it) | red; open a PR with the new anchor (`scripts/reanchor.mjs`) |
-| **FIXED_DIFFERENTLY** | precondition gone, replacement absent, no whitespace-only match | red; log region for human triage |
+| **FIXED_DIFFERENTLY** | precondition gone, replacement absent, no whitespace-only match | red; Claude drafts a rewrite as a PR (below) |
 | **MULTI_MATCH** | precondition matches more than once (unsafe) | red; tighten the anchor |
 | **MISSING** | target absent in both clones | red |
 
@@ -202,6 +202,20 @@ classifies every patch:
 - **Pull requests to `main`:** run the same gate as a review-time check and fail
   the run if any precondition broke. Never advances the pointer.
 - **No notification integration** (owner preference): a red run is the signal.
+- **A patch upstream truly broke (FIXED_DIFFERENTLY) is drafted by Claude.** The
+  gate saves the patch, canonical's current file and canonical's change to it
+  under `.lkg-proposals/broken/`; `anthropics/claude-code-action` (pinned to a
+  commit) edits only that patch's ledger entry and writes a plain-English
+  explanation, with file tools only (no shell, no git).
+  `scripts/verify-rewrite.mjs` then requires each new precondition to occur
+  exactly once in canonical's file; only then is one PR opened per set of broken
+  patches, and a re-run while it is open does not ask again. A person approves the
+  PR's checks, reads the diff and merges: fitting is not the same as working.
+  Claude authenticates with the owner's Claude Code subscription through the
+  `CLAUDE_CODE_OAUTH_TOKEN` secret (`claude setup-token`); a rejected or expired
+  token turns the run red with the renewal steps. Proven live on 2026-10-16 on a
+  test branch where the b2b header patch was broken on purpose: Claude's draft
+  was byte-identical to the real patch, with a correct plain-English explanation.
 - **Repo setting this needs:** "Allow GitHub Actions to create and approve pull
   requests" (Settings, Actions, General). Without it every PR the workflow opens
   fails. It was off until 2026-10-16 (so no retirement or surface-drift PR could
@@ -269,6 +283,7 @@ bash scripts/lkg-gate.sh
 bash tests/lkg-gate.test.sh              # unit: classification + resolution
 bash tests/lkg-gate.integration.test.sh  # main() flow incl. obsolete detection and re-anchoring
 node --test scripts/reanchor.test.mjs    # unit: whitespace-only re-anchoring
+node --test scripts/verify-rewrite.test.mjs  # unit: is a drafted rewrite fit to propose
 node --test scripts/derive-surfaces.test.mjs  # unit: surface derivation + drift diff
 
 # Runtime-surface check against a local boilerplate clone (ADR-008):
