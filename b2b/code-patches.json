@@ -8,7 +8,7 @@
             "description": "Make header.js defensive when the nav-tools section is missing (DA.live strips empty divs), preventing a null-reference crash.",
             "precondition": "const navTools = nav.querySelector('.nav-tools');",
             "replacement": "let navTools = nav.querySelector('.nav-tools');\n\n  // Create the nav-tools section if it is missing. DA.live strips empty\n  // divs during content processing, leaving nav with only 2 sections\n  // (brand, sections) instead of 3 — without this guard header.js throws\n  // \"Cannot read properties of null\".\n  if (!navTools) {\n    navTools = document.createElement('div');\n    navTools.classList.add('nav-tools');\n    nav.appendChild(navTools);\n  }",
-            "exit": "TODO(step-8): file PR to hlxsites/aem-boilerplate-commerce; delete on merge",
+            "exit": "Retires when Adobe fixes this itself: the daily gate then finds the replacement already present and opens a removal PR. Not filed upstream (owner, 2026-10-16).",
             "critical": false
         },
         {
@@ -17,7 +17,7 @@
             "description": "Sanitize SKU aliases (replace / with -) in the AEM Assets image slot so SKUs containing forward slashes produce valid asset URLs. Consolidates what would otherwise be 14+ per-block import swaps into one dropin patch.",
             "precondition": "const{wrapper:s,alias:m,params:r,imageProps:i}=e;if(!i.src)throw new Error(\"An image source is required. Please provide a `src` or `imageProps.src`.\");const n=s??document.createElement(\"div\"),o=w(i.src,m,r)",
             "replacement": "const{wrapper:s,alias:m,params:r,imageProps:i}=e;if(!i.src)throw new Error(\"An image source is required. Please provide a `src` or `imageProps.src`.\");const sanitizedAlias=m.replace(/\\//g,\"-\");const n=s??document.createElement(\"div\"),o=w(i.src,sanitizedAlias,r)",
-            "exit": "TODO(step-8): file PR upstream to the @dropins aem-assets package; delete when the released dropin sanitizes aliases",
+            "exit": "Retires when Adobe fixes this itself: the daily gate then finds the replacement already present and opens a removal PR. Not filed upstream (owner, 2026-10-16).",
             "critical": false
         },
         {
@@ -26,7 +26,7 @@
             "description": "Fix the account-sidebar selector race that renders an empty left nav on freshly-published storefronts by also matching the authored structure (main > div > ol > li).",
             "precondition": "const sidebarItemsConfig = fragment.querySelectorAll('.default-content-wrapper > ol > li');",
             "replacement": "// Match the authored structure (main > div > ol > li) in addition to the\n// post-decoration class. The .default-content-wrapper class is added by\n// EDS's decoration pipeline, and its timing races against this query; on a\n// freshly-published storefront the race tips the wrong way and the sidebar\n// renders empty. The structural selector finds the items regardless.\nconst sidebarItemsConfig = fragment.querySelectorAll('main > div > ol > li, .default-content-wrapper > ol > li');",
-            "exit": "TODO(step-8): file PR to hlxsites/aem-boilerplate-commerce (cf. fork PR #2); delete on merge",
+            "exit": "Retires when Adobe fixes this itself: the daily gate then finds the replacement already present and opens a removal PR. Not filed upstream (owner, 2026-10-16).",
             "critical": false
         },
         {
@@ -35,7 +35,7 @@
             "description": "Render the B2B account page as a nav-left/content-right sidebar. The page authors a 30%/70% split via Section Metadata (data-column-width), but the boilerplate only lays sections into a row under body.columns with a --column-width var, and nothing translates the authored attribute. This decorates data-column-width sections into the var + adds body.columns, so the existing body.columns flex rule renders the sidebar (mobile stacks below 900px). Layout only - no styling.",
             "precondition": "export function decorateMain(main) {\n  decorateLinks(main);\n  decorateIcons(main);\n  buildAutoBlocks(main);\n  decorateSections(main);\n  decorateBlocks(main);\n  decorateButtons(main);\n}",
             "replacement": "/**\n * Activate the boilerplate's authored column layout (Demo Builder thin-layer patch).\n * The account page authors a 30%/70% split via Section Metadata (data-column-width),\n * but the boilerplate only lays sections into a row when body.columns is set and each\n * section carries the --column-width var, and nothing translates the authored attribute.\n * Feed data-column-width into --column-width and switch on body.columns so the existing\n * `body.columns main > .section { flex-basis: var(--column-width) }` rule renders the\n * sidebar layout (mobile stacks below 900px). Layout only - no styling.\n */\nfunction decorateColumnSections(main) {\n  const columns = main.querySelectorAll(':scope > .section[data-column-width]');\n  if (!columns.length) return;\n  columns.forEach((section) => {\n    section.style.setProperty('--column-width', section.dataset.columnWidth);\n  });\n  document.body.classList.add('columns');\n}\n\nexport function decorateMain(main) {\n  decorateLinks(main);\n  decorateIcons(main);\n  buildAutoBlocks(main);\n  decorateSections(main);\n  decorateColumnSections(main);\n  decorateBlocks(main);\n  decorateButtons(main);\n}",
-            "exit": "TODO: file PR to hlxsites/aem-boilerplate-commerce to honor section data-column-width; delete on merge",
+            "exit": "Retires when Adobe fixes this itself: the daily gate then finds the replacement already present and opens a removal PR. Not filed upstream (owner, 2026-10-16).",
             "critical": false
         },
         {
@@ -44,7 +44,7 @@
             "description": "Redirect a published PDP whose SKU no longer resolves to the native 404 instead of mounting an empty drop-in. The warm path: a previously-published PDP serves 200 from the content bus, so the CDN-404 smart-404 snippet never runs; fetchProductData resolves null for an unknown SKU and the initializer mounted anyway.",
             "precondition": "  const [product, labels] = await Promise.all([\n    getProductData(true),\n    fetchPlaceholders('placeholders/pdp.json'),\n  ]);",
             "replacement": "  const [product, labels] = await Promise.all([\n    getProductData(true),\n    fetchPlaceholders('placeholders/pdp.json'),\n  ]);\n\n  // A published PDP whose SKU no longer resolves serves 200 from the content\n  // bus, so the CDN-404 redirect never runs. fetchProductData resolves null\n  // for an unknown SKU — send the shopper to the native 404 rather than\n  // mounting an empty product block. (Demo Builder warm-path guard.)\n  if (!product && !IS_UE) {\n    return loadErrorPage();\n  }",
-            "exit": "file PR to adobe-commerce/boilerplate-b2b-template; delete on merge",
+            "exit": "Retires when Adobe fixes this itself: the daily gate then finds the replacement already present and opens a removal PR. Not filed upstream (owner, 2026-10-16).",
             "critical": false
         }
     ],

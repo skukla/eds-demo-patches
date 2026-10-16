@@ -67,7 +67,7 @@ Each patch is a named, precondition-anchored string replacement:
   "description": "one-line what + why",
   "precondition": "a unique substring of the target file's current content",
   "replacement": "the patched version of that substring",
-  "exit": "how this patch becomes obsolete (upstream PR → delete on merge, etc.)",
+  "exit": "how this patch becomes obsolete (today: Adobe fixes it itself; we do not file upstream)",
   "critical": false
 }
 ```
