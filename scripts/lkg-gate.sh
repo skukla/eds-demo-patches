@@ -30,6 +30,7 @@
 #                                 patch shared by ledgers on two canonicals may be
 #                                 fixed in only one)
 #   reanchor=<ledger>:<id> ...    patches whose new anchor is in .lkg-proposals/reanchor/
+#   broken=<ledger>:<id> ...      FIXED_DIFFERENTLY patches; context in .lkg-proposals/broken/
 #
 # The pure functions below (count_occurrences, classify_patch, resolve_target)
 # are sourced by tests/lkg-gate.test.sh without running main().
@@ -110,6 +111,33 @@ classify_patch() {
 reanchored_text() {
     command -v node >/dev/null 2>&1 || return 1
     printf '%s' "$2" | node "$SCRIPT_SELF_DIR/reanchor.mjs" "$1"
+}
+
+# save_broken_context <ledger> <id> <index> <file> <clone_dir> <prev_lkg> <sha> <url>
+# — write what a rewrite needs to .lkg-proposals/broken/<ledger-dir>__<id>.*: the
+# patch as it stands (.patch.json, with where it came from), the target file as
+# canonical has it now (.target), and canonical's change to that file since the
+# last verified pointer (.diff, when the old commit can still be read). The
+# workflow hands these to Claude to draft the rewrite (a PR a person merges).
+save_broken_context() {
+    local ledger="$1" id="$2" index="$3" file="$4" clone_dir="$5" prev="$6" sha="$7" url="$8"
+    local base dir target
+    base="$(basename "$(dirname "$ledger")")__${id}"
+    dir="$PROPOSALS_DIR/broken"
+    mkdir -p "$dir"
+    target="$(jq -r ".patches[$index].target" "$ledger")"
+    jq --arg ledger "$ledger" --arg canonical "$url" --arg sha "$sha" --arg prev "$prev" \
+        ".patches[$index] + {ledger: \$ledger, canonical: \$canonical, canonicalSha: \$sha, previousVerifiedSha: \$prev}" \
+        "$ledger" > "$dir/$base.patch.json"
+    [[ -n "$file" && -f "$file" ]] && cp "$file" "$dir/$base.target"
+    if [[ -n "$prev" && "$prev" != "$sha" ]]; then
+        git -C "$clone_dir" cat-file -e "${prev}^{commit}" 2>/dev/null \
+            || git -C "$clone_dir" fetch --quiet --filter=blob:none origin "$prev" >/dev/null 2>&1 || true
+        git -C "$clone_dir" diff "$prev" "$sha" -- "$target" > "$dir/$base.diff" 2>/dev/null \
+            || rm -f "$dir/$base.diff"
+        [[ -s "$dir/$base.diff" ]] || rm -f "$dir/$base.diff"
+    fi
+    return 0
 }
 
 # emit_output <key> <value> — append a key=value line to GITHUB_OUTPUT if set.
@@ -210,6 +238,7 @@ main() {
     local all_ok_global=1
     local -a obsolete_ids=()
     local -a reanchor_ids=()
+    local -a broken_ids=()
     local ledger
     for ledger in ./*/code-patches.json; do
         [[ -e "$ledger" ]] || continue
@@ -267,6 +296,8 @@ main() {
                 FIXED_DIFFERENTLY)
                     echo "  ✗ FIXED_DIFFERENTLY: $id — precondition gone from $target and replacement not present. Human triage needed; current region:" >&2
                     if [[ -n "$file" ]]; then grep -nF "$(printf '%s' "$precond" | head -1)" "$file" >&2 || echo "    (anchor line not found)" >&2; fi
+                    save_broken_context "$ledger" "$id" "$i" "$file" "$clone_dir" "$prev_lkg" "$sha" "$url"
+                    broken_ids+=("$(basename "$(dirname "$ledger")"):$id")
                     ledger_ok=0
                     all_ok_global=0
                     ;;
@@ -354,6 +385,9 @@ main() {
     fi
     if [[ "${#reanchor_ids[@]}" -gt 0 ]]; then
         emit_output "reanchor" "${reanchor_ids[*]}"
+    fi
+    if [[ "${#broken_ids[@]}" -gt 0 ]]; then
+        emit_output "broken" "${broken_ids[*]}"
     fi
 
     if [[ "$all_ok_global" -eq 1 ]]; then

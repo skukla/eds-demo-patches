@@ -215,6 +215,126 @@ jobs:
             git checkout -q "$base"
           done
 
+      - name: Plan rewrites of broken patches
+        # Cron/dispatch only. One PR per SET of broken patches, named by a hash of
+        # the set, so a daily re-run while the owner has not merged yet finds the
+        # open PR and does not ask Claude again.
+        id: plan
+        if: >-
+          github.event_name != 'pull_request' &&
+          steps.gate.outputs.broken != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BROKEN: ${{ steps.gate.outputs.broken }}
+        run: |
+          set -euo pipefail
+          key="$(printf '%s\n' $BROKEN | sort | sha256sum | cut -c1-10)"
+          branch="lkg/rewrite-$key"
+          echo "branch=$branch" >> "$GITHUB_OUTPUT"
+          if gh pr list --head "$branch" --state open --json number --jq 'length' | grep -q '^[1-9]'; then
+            echo "A rewrite PR for these patches is already open ($branch) — waiting for its merge."
+            echo "todo=" >> "$GITHUB_OUTPUT"
+          else
+            echo "todo=$BROKEN" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Draft rewrites of broken patches with Claude
+        # Upstream changed code a patch edits, in a way no re-anchor can follow
+        # (FIXED_DIFFERENTLY). Claude reads the patch, canonical's current file and
+        # canonical's change to it (.lkg-proposals/broken/, written by the gate),
+        # edits only that patch's ledger entry, and explains itself. It can read
+        # and edit files and nothing else: no shell, no git. Authenticates with the
+        # owner's Claude Code subscription (CLAUDE_CODE_OAUTH_TOKEN, from
+        # `claude setup-token`). Pinned to a commit: this action edits code that
+        # reaches storefronts, so a moving tag is not trusted.
+        id: claude
+        if: steps.plan.outputs.todo != ''
+        uses: anthropics/claude-code-action@374f254f5efaf968abfe15d399fd90972e8138b9 # v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          github_token: ${{ github.token }}
+          claude_args: --model sonnet --allowedTools Read,Edit,Write,Glob,Grep
+          prompt: |
+            Upstream changed code that this repository's storefront patches edit, so
+            each patch listed here no longer applies: ${{ steps.plan.outputs.todo }}
+            (each entry is <ledger-folder>:<patch-id>).
+
+            For each one, .lkg-proposals/broken/ holds:
+            - <ledger-folder>__<patch-id>.patch.json: the patch as it stands. Its
+              `description` says what it is for; `precondition` is the exact text it
+              looks for and `replacement` is what it puts in its place.
+            - <ledger-folder>__<patch-id>.target: the file as upstream has it now.
+            - <ledger-folder>__<patch-id>.diff (when present): upstream's change to
+              that file since the patch last worked.
+
+            Your task, for each patch: edit ONLY that patch's entry in
+            <ledger-folder>/code-patches.json so it does the same job against the
+            current file.
+            - `precondition` must be text copied exactly from the .target file, and
+              must occur in it exactly once.
+            - `replacement` must achieve the patch's `description` and keep upstream's
+              other changes in that region.
+            - Change no other field, no other patch, and no other file, except the
+              explanation below.
+            - If upstream now does the patch's job itself, or you are not confident
+              of a correct rewrite, do not edit the ledger; say so in the explanation.
+
+            Then write .lkg-proposals/broken/EXPLANATION.md for the repository's
+            owner, in plain English: for each patch, what upstream changed, what you
+            changed and why, and anything they should check before merging.
+
+      - name: Check Claude's drafts fit
+        # A draft is proposed only if each rewritten precondition occurs exactly once
+        # in canonical's current file and the patch still changes something
+        # (scripts/verify-rewrite.mjs), the gate's own rule for OK.
+        if: steps.claude.outcome == 'success'
+        run: node scripts/verify-rewrite.mjs .lkg-proposals/broken ${{ steps.plan.outputs.todo }}
+
+      - name: Open the rewrite PR
+        if: steps.claude.outcome == 'success'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BRANCH: ${{ steps.plan.outputs.branch }}
+          TODO: ${{ steps.plan.outputs.todo }}
+        run: |
+          set -euo pipefail
+          explanation=".lkg-proposals/broken/EXPLANATION.md"
+          if git diff --quiet -- '*/code-patches.json'; then
+            echo "::error::Claude changed no ledger for: $TODO. Its explanation is in this run's summary."
+            [ -f "$explanation" ] && cat "$explanation" >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+          base="$(git rev-parse --abbrev-ref HEAD)"
+          git checkout -B "$BRANCH"
+          git config user.name 'github-actions[bot]'
+          git config user.email 'github-actions[bot]@users.noreply.github.com'
+          git add -- '*/code-patches.json'
+          git commit -m "chore(lkg): rewrite patches upstream broke: $TODO"
+          git push -u origin "$BRANCH" --force-with-lease
+          body="$(mktemp)"
+          {
+            echo "Upstream changed code these patches edit, so they no longer applied: \`$TODO\`."
+            echo "Claude drafted the rewrite below; each new precondition occurs exactly once in"
+            echo "canonical's current file (checked by \`scripts/verify-rewrite.mjs\`)."
+            echo
+            echo "**Before merging:** press \"Approve and run\" so the drift gate verifies every"
+            echo "patch on this branch, and read the diff: fitting is not the same as working."
+            echo
+            echo "## Claude's explanation"
+            echo
+            if [ -f "$explanation" ]; then cat "$explanation"; else echo "(Claude wrote none.)"; fi
+            echo
+            echo "Canonical SHA: \`${{ steps.gate.outputs.sha }}\`"
+          } > "$body"
+          gh pr create --base "$base" --head "$BRANCH" \
+            --title "chore(lkg): rewrite patches upstream broke: $TODO" --body-file "$body"
+          git checkout -q "$base"
+
+      - name: Say why the rewrite could not be drafted
+        if: failure() && steps.claude.outcome == 'failure'
+        run: |
+          echo "::error::Claude could not draft the rewrite. If its log above mentions authentication, a 401 or an expired token, renew the token: run 'claude setup-token', then 'gh secret set CLAUDE_CODE_OAUTH_TOKEN --repo $GITHUB_REPOSITORY'. If it mentions usage limits, the Claude Code plan's limit was reached; the next daily run tries again."
+
       - name: Open PR for runtime-surface drift
         # Cron/dispatch only. The gate's surface check (ADR-008) wrote a
         # `runtime-surfaces.json.proposed` for any ledger whose boilerplate now
