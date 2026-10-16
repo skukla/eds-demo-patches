@@ -177,6 +177,30 @@ assert_eq "1" "$RC5" "a red later ledger fails the gate"
 assert_contains "$(cat "$OUTFILE5")" "all_ok=false" "all_ok is false when any ledger is red, not just the first"
 assert_contains "$(cat "$OUTFILE5")" "all_ok_" "per-ledger results are still emitted"
 
+# --- A real change: the gate saves what a rewrite needs ---------------------------
+echo "# broken patch context"
+CANON6="$TMP/canonical6"
+mkdir -p "$CANON6/scripts"
+git -C "$CANON6" init -q
+git -C "$CANON6" config user.email t@t.t
+git -C "$CANON6" config user.name t
+printf 'before\nconst HEALTHY = makeThing(options);\nafter\n' > "$CANON6/scripts/healthy.js"
+git -C "$CANON6" add -A && git -C "$CANON6" commit -qm changed
+ROOT6="$TMP/root6"
+mkdir -p "$ROOT6/citisignal"
+cp "$ROOT2/citisignal/code-patches.json" "$ROOT6/citisignal/code-patches.json"
+echo "$POINTER" > "$ROOT6/last-known-good"
+OUTFILE6="$TMP/gh_output6"
+: > "$OUTFILE6"
+set +e
+( cd "$ROOT6" && CANONICAL_DIR="$CANON6" BLOCK_DIR="$BLOCKS" GITHUB_OUTPUT="$OUTFILE6" bash "$GATE" > /dev/null 2>&1 )
+set -e
+CTX="$ROOT6/.lkg-proposals/broken/citisignal__healthy-patch"
+assert_contains "$(cat "$OUTFILE6")" "broken=citisignal:healthy-patch" "the workflow is told which patch broke"
+assert_eq "healthy-patch" "$(jq -r .id "$CTX.patch.json")" "the patch is saved as it stands"
+assert_eq "$(git -C "$CANON6" rev-parse HEAD)" "$(jq -r .canonicalSha "$CTX.patch.json")" "with the canonical commit it failed against"
+assert_contains "$(cat "$CTX.target")" "makeThing(options)" "and the target file as canonical has it now"
+
 echo ""
 echo "Passed: $PASS  Failed: $FAIL"
 [[ "$FAIL" -eq 0 ]]
