@@ -21,15 +21,6 @@
             "critical": false
         },
         {
-            "id": "commerce-account-sidebar-selector-race",
-            "target": "blocks/commerce-account-sidebar/commerce-account-sidebar.js",
-            "description": "Fix the account-sidebar selector race that renders an empty left nav on freshly-published storefronts by also matching the authored structure (main > div > ol > li).",
-            "precondition": "const sidebarItemsConfig = fragment.querySelectorAll('.default-content-wrapper > ol > li');",
-            "replacement": "// Match the authored structure (main > div > ol > li) in addition to the\n// post-decoration class. The .default-content-wrapper class is added by\n// EDS's decoration pipeline, and its timing races against this query; on a\n// freshly-published storefront the race tips the wrong way and the sidebar\n// renders empty. The structural selector finds the items regardless.\nconst sidebarItemsConfig = fragment.querySelectorAll('main > div > ol > li, .default-content-wrapper > ol > li');",
-            "exit": "Retires when Adobe fixes this itself: the daily gate then finds the replacement already present and opens a removal PR. Not filed upstream (owner, 2026-10-16).",
-            "critical": false
-        },
-        {
             "id": "product-teaser-sku-encoding",
             "target": "blocks/product-teaser/product-teaser.js",
             "description": "Build the product-teaser Details link with the canonical getProductLink(urlKey, sku) instead of hand-building it with rootLink — so this demo-team custom block (demo-system-stores/accs-citisignal) produces the same Helix-clean /products/{urlKey}/{sku} path as every Adobe canonical product block. A hand-built link keeps the SKU's case and underscores, which Helix strips when it publishes, so the link would miss the page.",

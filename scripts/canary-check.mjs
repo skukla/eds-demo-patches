@@ -15,10 +15,6 @@
  * Environment:
  *   CANARY_URL               the storefront (default: the B2B canary)
  *   CANARY_LEDGER            ledger to check (default: b2b/code-patches.json)
- *   CANARY_GRAPHQL           Commerce GraphQL endpoint, for the shopper sign-in
- *   CANARY_STORE_VIEW        store view code sent as the Store header
- *   PATCH_CANARY_EMAIL       the canary shopper (a GitHub secret)
- *   PATCH_CANARY_PASSWORD    its password (a GitHub secret; never printed)
  *   CANARY_GHOST_PDP         a published product page whose SKU does not exist
  *   CANARY_REAL_PDP          a published product page whose SKU does (the control)
  *
@@ -38,8 +34,6 @@ const WAIT_MS = 20_000;
 const BEHAVIOUR_CHECKED = new Set([
     'header-nav-tools-defensive',
     'aem-assets-sku-sanitization',
-    'account-page-column-layout',
-    'commerce-account-sidebar-selector-race',
     'pdp-empty-data-redirect',
 ]);
 
@@ -73,26 +67,6 @@ async function checkServed(patches) {
             record(patch.id, UNCHECKED, `could not fetch ${patch.target}: ${error.message}`);
         }
     }
-}
-
-/** A Commerce customer token for the canary shopper, or a reason it is missing. */
-async function shopperToken() {
-    const { CANARY_GRAPHQL: endpoint, CANARY_STORE_VIEW: store } = process.env;
-    const { PATCH_CANARY_EMAIL: email, PATCH_CANARY_PASSWORD: password } = process.env;
-    if (!endpoint || !store || !email || !password) {
-        return { reason: 'the shopper sign-in is not configured (endpoint, store view, email, password)' };
-    }
-    const res = await fetch(endpoint, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Store: store },
-        body: JSON.stringify({
-            query: 'mutation($e:String!,$p:String!){generateCustomerToken(email:$e,password:$p){token}}',
-            variables: { e: email, p: password },
-        }),
-    });
-    const answer = await res.json().catch(() => ({}));
-    const token = answer?.data?.generateCustomerToken?.token;
-    return token ? { token } : { reason: `the shopper could not sign in (${answer?.errors?.[0]?.message ?? res.status})` };
 }
 
 /**
@@ -192,58 +166,6 @@ async function checkSkuSlash(browser) {
     }
 }
 
-async function checkAccount(browser) {
-    const ids = ['account-page-column-layout', 'commerce-account-sidebar-selector-race'];
-    const signedIn = await shopperToken();
-    if (!signedIn.token) {
-        for (const id of ids) record(id, UNCHECKED, signedIn.reason);
-        return;
-    }
-    const context = await newContext(browser);
-    await context.addCookies([
-        { name: 'auth_dropin_user_token', value: signedIn.token, url: SITE },
-        { name: 'auth_dropin_firstname', value: 'Patch', url: SITE },
-    ]);
-    const page = await context.newPage();
-    // The condition the layout patch exists for: a page NOT marked with the Columns
-    // template. Adobe's own code lays out a marked page (commerce.js applyTemplates),
-    // and the canary's account pages are all marked, so the mark is removed here on
-    // purpose; only the patch can then switch the columns on.
-    await page.route((url) => url.pathname === '/customer/account', async (route) => {
-        const real = await route.fetch();
-        const html = (await real.text()).replace(/<meta name="template"[^>]*>/i, '');
-        await route.fulfill({ response: real, body: html });
-    });
-    try {
-        await open(page, '/customer/account');
-        if (/\/customer\/login/.test(page.url())) {
-            for (const id of ids) record(id, UNCHECKED, 'the account page sent the signed-in shopper to the login page');
-            return;
-        }
-        const layout = await page.evaluate(() => ({
-            columns: document.body.classList.contains('columns'),
-            width: [...document.querySelectorAll('main > .section')]
-                .some((s) => s.style.getPropertyValue('--column-width')),
-        }));
-        record(ids[0], layout.columns && layout.width ? WORKS : BROKEN,
-            layout.columns && layout.width
-                ? 'menu left, content right, on a page without the Columns template'
-                : `body.columns=${layout.columns}, --column-width set=${layout.width}`);
-        // The sidebar patch acts on the commerce-account-sidebar block. A storefront
-        // whose account pages use another menu (the B2B template's commerce-account-nav)
-        // never runs it, and that is reported as such, not as a broken sidebar.
-        if ((await page.locator('.commerce-account-sidebar').count()) === 0) {
-            record(ids[1], UNCHECKED, 'no account page here uses the commerce-account-sidebar block, so the patch never runs');
-        } else {
-            const items = await page.locator('.commerce-account-sidebar a')
-                .first().waitFor({ state: 'attached', timeout: WAIT_MS }).then(() => true).catch(() => false);
-            record(ids[1], items ? WORKS : BROKEN, items ? 'the sidebar lists its items' : 'the account sidebar is empty');
-        }
-    } finally {
-        await context.close();
-    }
-}
-
 async function checkMissingProduct(browser) {
     const id = 'pdp-empty-data-redirect';
     const page = await (await newContext(browser)).newPage();
@@ -282,7 +204,6 @@ async function main() {
     try {
         await checkHeader(browser);
         await checkSkuSlash(browser);
-        await checkAccount(browser);
         await checkMissingProduct(browser);
     } finally {
         await browser.close();

@@ -32,11 +32,6 @@ jobs:
     env:
       CANARY_URL: https://main--patch-canary-b2b--skukla.aem.live
       CANARY_LEDGER: b2b/code-patches.json
-      # The store the canary's storefront itself calls (public: it is in the site's config.json).
-      CANARY_GRAPHQL: https://na1-sandbox.api.commerce.adobe.com/UoGYsHrcxMyeoVd2zUktZi/graphql
-      CANARY_STORE_VIEW: citisignal_us
-      PATCH_CANARY_EMAIL: ${{ secrets.PATCH_CANARY_EMAIL }}
-      PATCH_CANARY_PASSWORD: ${{ secrets.PATCH_CANARY_PASSWORD }}
     steps:
       - name: Checkout patches repo
         uses: actions/checkout@v4

@@ -24,9 +24,9 @@ citisignal/
   patches.json              content patches (DA.live HTML)
   code-patches.json         code patches (canonical + demo-team block files)
 custom/
-  code-patches.json         2 universal patches against canonical (header + sidebar)
+  code-patches.json         1 universal patch against canonical (header)
 b2b/
-  code-patches.json         5 patches (universal) against the B2B template
+  code-patches.json         3 patches against the B2B template
   runtime-surfaces.json     derived runtime-surface inventory + human residual (ADR-008)
   last-known-good           B2B template SHA storefronts build from
 last-known-good             default canonical SHA (hlxsites) — shared by citisignal + custom
@@ -129,11 +129,6 @@ it builds the same Helix-clean path.
 - **`header-nav-tools-defensive`** — `blocks/header/header.js` (C, B, U). Creates
   the `.nav-tools` section when it's missing. DA.live strips empty divs during
   content processing, leaving header.js to throw "Cannot read properties of null".
-- **`commerce-account-sidebar-selector-race`** —
-  `blocks/commerce-account-sidebar/commerce-account-sidebar.js` (C, B, U). Also
-  matches the authored `main > div > ol > li` structure so a freshly-published
-  storefront's account sidebar isn't empty — the post-decoration class it
-  originally queried races against EDS's decoration pipeline.
 - **`aem-assets-sku-sanitization`** —
   `scripts/__dropins__/tools/lib/aem/assets.js` (C, B). Replaces `/` with `-` in
   SKU image aliases so SKUs containing forward slashes produce valid AEM Assets
@@ -146,6 +141,20 @@ it builds the same Helix-clean path.
 `product-teaser*` patches target a demo-team block (sourced live from
 `demo-system-stores/accs-citisignal`, not canonical) and apply post-install. The
 gate resolves each target against canonical first, then the block source.
+
+**Removed 2026-10-17, because they never acted on a shipped storefront** (found by
+the patch canary; owner: "if the fix never runs, it's dead"):
+
+- `commerce-account-sidebar-selector-race` patched the `commerce-account-sidebar`
+  block. Every shipped package takes its account pages from Adobe's B2B content
+  (`adobe-commerce/boilerplate-b2b`, directly or as the account overlay over the
+  CitiSignal brand), and those pages use `commerce-account-nav`. The overlay replaces
+  the four CitiSignal pages that used the sidebar block, so it ran nowhere.
+- `account-page-column-layout` laid out sections with authored column widths on a
+  page not marked with the Columns template. Adobe's own `applyTemplates` lays out a
+  marked page, and every page with column widths in the shipped content sources is
+  marked (CitiSignal: 15 of 123 pages have widths, all marked; the B2B and Bodea
+  sources: none outside the marked account pages). It added nothing.
 
 **Not yet in the ledger (deferred):**
 
@@ -244,8 +253,6 @@ store) in a browser and checks each B2B patch by what it is for:
 |---|---|
 | `header-nav-tools-defensive` | the header renders when the menu arrives without its tools section (served that way on purpose) |
 | `aem-assets-sku-sanitization` | an image for SKU `CANARY/SLASH-1` is named `CANARY-SLASH-1`, slash replaced |
-| `account-page-column-layout` | signed in as the canary shopper, the account page lays out menu-left |
-| `commerce-account-sidebar-selector-race` | the account sidebar lists its items |
 | `pdp-empty-data-redirect` | a published product page whose SKU does not exist lands on the 404 page (a real product page, the control, does not) |
 
 Every patch is also checked for its replacement text in the file the live site serves.
@@ -257,8 +264,7 @@ anything but "works" fails the run.
 the tested commit) served in place of the live ones. Every check must then fail; one
 that still passes is testing nothing, and fails the run.
 
-Runs after each green gate run, daily at 09:47 UTC, and by hand. The shopper's login is
-the `PATCH_CANARY_EMAIL` / `PATCH_CANARY_PASSWORD` secrets. The canary is not updated by
+Runs after each green gate run, daily at 09:47 UTC, and by hand. The canary is not updated by
 this workflow yet: it checks the storefront as it stands.
 
 ## The runtime-surface drift check (ADR-008)
