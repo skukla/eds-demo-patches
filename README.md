@@ -264,8 +264,28 @@ anything but "works" fails the run.
 the tested commit) served in place of the live ones. Every check must then fail; one
 that still passes is testing nothing, and fails the run.
 
-Runs after each green gate run, daily at 09:47 UTC, and by hand. The canary is not updated by
-this workflow yet: it checks the storefront as it stands.
+Runs after each green gate run, daily at 09:47 UTC, and by hand.
+
+**First it updates the canary, the way an SC's Check for Updates would.** Before the checks,
+the workflow builds the Demo Builder extension's own update command (`npm run
+build:canary-update` in `skukla/demo-builder-vscode`, at the branch named by `EXTENSION_REF`)
+and runs it on the canary: the same merge to the tested version, patch re-apply and restore
+of Demo Builder's files that an SC's project takes. Running the extension's code rather than
+a copy here means the canary tests what SCs actually get.
+
+- `canary/b2b.last-synced` holds the template commit the canary last matched. The run reads
+  it, and commits the new one when the update moved the canary.
+- After a push, `scripts/canary-wait-for-code.mjs` waits (up to 10 minutes) until the live
+  site serves the pushed code, so the checks see the updated storefront.
+- "No template change to apply" is the normal result on a day the tested version did not
+  move.
+
+It needs two settings on this repo:
+
+| Setting | What | When it breaks |
+|---|---|---|
+| secret `CANARY_REPO_TOKEN` | fine-grained token, Contents read and write on `skukla/patch-canary-b2b` only, one year | expired: the update step fails with 401; save a new one with `gh secret set CANARY_REPO_TOKEN --repo skukla/eds-demo-patches` |
+| variable `EXTENSION_REF` | the extension branch to build the update from; `master` once the release carrying it merges | a deleted branch: the checkout step fails |
 
 ## The runtime-surface drift check (ADR-008)
 
