@@ -233,6 +233,34 @@ classifies every patch:
   reporting only the FIRST ledger (fixed) and removal PRs whose queued checks
   failed on a deleted branch and emailed the owner (removal is now a commit).
 
+## The patch canary (`canary.yml`)
+
+The drift gate proves each patch's TEXT still applies. The canary proves the patched
+storefront still BEHAVES. `scripts/canary-check.mjs` opens a scratch Demo Builder
+storefront built from the tested version (`patch-canary-b2b`, on the CitiSignal B2B
+store) in a browser and checks each B2B patch by what it is for:
+
+| Patch | Check |
+|---|---|
+| `header-nav-tools-defensive` | the header renders when the menu arrives without its tools section (served that way on purpose) |
+| `aem-assets-sku-sanitization` | an image for SKU `CANARY/SLASH-1` is named `CANARY-SLASH-1`, slash replaced |
+| `account-page-column-layout` | signed in as the canary shopper, the account page lays out menu-left |
+| `commerce-account-sidebar-selector-race` | the account sidebar lists its items |
+| `pdp-empty-data-redirect` | a published product page whose SKU does not exist lands on the 404 page (a real product page, the control, does not) |
+
+Every patch is also checked for its replacement text in the file the live site serves.
+A patch with no behaviour check says so in the report, so a new patch cannot pass on
+its text alone unnoticed. Each run reports per patch: works, broken, or could not check;
+anything but "works" fails the run.
+
+**Then it checks the checks.** The same run is repeated with Adobe's unpatched files (at
+the tested commit) served in place of the live ones. Every check must then fail; one
+that still passes is testing nothing, and fails the run.
+
+Runs after each green gate run, daily at 09:47 UTC, and by hand. The shopper's login is
+the `PATCH_CANARY_EMAIL` / `PATCH_CANARY_PASSWORD` secrets. The canary is not updated by
+this workflow yet: it checks the storefront as it stands.
+
 ## The runtime-surface drift check (ADR-008)
 
 A working storefront fetches content documents at runtime that the CDN content

@@ -1,0 +1,61 @@
+name: Patch canary
+
+# Do our patches still WORK, not just fit? The drift gate proves each patch's text
+# still applies to Adobe's boilerplate; this opens the canary storefront (a scratch
+# Demo Builder storefront built from this repo's tested version) in a browser and
+# checks each B2B patch by what it is for. See scripts/canary-check.mjs.
+#
+# Then it checks the checks: the same run with Adobe's unpatched files served in place
+# of the live ones must fail every check, or a check is testing nothing.
+#
+# The canary is NOT updated by this workflow yet: it checks the storefront as it
+# stands (EDS-49 step B, in skukla/demo-builder-vscode, will bring it to each new
+# tested version first).
+
+on:
+  workflow_run:
+    workflows: ['LKG drift gate']
+    types: [completed]
+  schedule:
+    - cron: '47 9 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  canary:
+    # After the gate only when it passed: a red gate has already said what is wrong.
+    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      CANARY_URL: https://main--patch-canary-b2b--skukla.aem.live
+      CANARY_LEDGER: b2b/code-patches.json
+      # The store the canary's storefront itself calls (public: it is in the site's config.json).
+      CANARY_GRAPHQL: https://na1-sandbox.api.commerce.adobe.com/UoGYsHrcxMyeoVd2zUktZi/graphql
+      CANARY_STORE_VIEW: citisignal_us
+      PATCH_CANARY_EMAIL: ${{ secrets.PATCH_CANARY_EMAIL }}
+      PATCH_CANARY_PASSWORD: ${{ secrets.PATCH_CANARY_PASSWORD }}
+    steps:
+      - name: Checkout patches repo
+        uses: actions/checkout@v4
+
+      - name: Ensure node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install a browser
+        run: |
+          npm install --no-save --no-audit --no-fund playwright@1.56.1
+          npx playwright install --with-deps chromium
+
+      - name: Check the patches work on the canary
+        run: node scripts/canary-check.mjs
+
+      - name: Check the checks (every one must fail with its patch removed)
+        if: always()
+        env:
+          CANARY_UNPATCHED: '1'
+        run: node scripts/canary-check.mjs
