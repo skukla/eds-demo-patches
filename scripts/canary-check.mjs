@@ -205,6 +205,15 @@ async function checkAccount(browser) {
         { name: 'auth_dropin_firstname', value: 'Patch', url: SITE },
     ]);
     const page = await context.newPage();
+    // The condition the layout patch exists for: a page NOT marked with the Columns
+    // template. Adobe's own code lays out a marked page (commerce.js applyTemplates),
+    // and the canary's account pages are all marked, so the mark is removed here on
+    // purpose; only the patch can then switch the columns on.
+    await page.route((url) => url.pathname === '/customer/account', async (route) => {
+        const real = await route.fetch();
+        const html = (await real.text()).replace(/<meta name="template"[^>]*>/i, '');
+        await route.fulfill({ response: real, body: html });
+    });
     try {
         await open(page, '/customer/account');
         if (/\/customer\/login/.test(page.url())) {
@@ -217,10 +226,19 @@ async function checkAccount(browser) {
                 .some((s) => s.style.getPropertyValue('--column-width')),
         }));
         record(ids[0], layout.columns && layout.width ? WORKS : BROKEN,
-            layout.columns && layout.width ? 'menu left, content right' : `body.columns=${layout.columns}, --column-width set=${layout.width}`);
-        const items = await page.locator('.commerce-account-sidebar a, .commerce-account-sidebar li')
-            .first().waitFor({ timeout: WAIT_MS }).then(() => true).catch(() => false);
-        record(ids[1], items ? WORKS : BROKEN, items ? 'the sidebar lists its items' : 'the account sidebar is empty');
+            layout.columns && layout.width
+                ? 'menu left, content right, on a page without the Columns template'
+                : `body.columns=${layout.columns}, --column-width set=${layout.width}`);
+        // The sidebar patch acts on the commerce-account-sidebar block. A storefront
+        // whose account pages use another menu (the B2B template's commerce-account-nav)
+        // never runs it, and that is reported as such, not as a broken sidebar.
+        if ((await page.locator('.commerce-account-sidebar').count()) === 0) {
+            record(ids[1], UNCHECKED, 'no account page here uses the commerce-account-sidebar block, so the patch never runs');
+        } else {
+            const items = await page.locator('.commerce-account-sidebar a')
+                .first().waitFor({ state: 'attached', timeout: WAIT_MS }).then(() => true).catch(() => false);
+            record(ids[1], items ? WORKS : BROKEN, items ? 'the sidebar lists its items' : 'the account sidebar is empty');
+        }
     } finally {
         await context.close();
     }
