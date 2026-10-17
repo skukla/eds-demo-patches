@@ -8,9 +8,13 @@ name: Patch canary
 # Then it checks the checks: the same run with Adobe's unpatched files served in place
 # of the live ones must fail every check, or a check is testing nothing.
 #
-# The canary is NOT updated by this workflow yet: it checks the storefront as it
-# stands (EDS-49 step B, in skukla/demo-builder-vscode, will bring it to each new
-# tested version first).
+# First it brings the canary to the current tested version with the Demo Builder
+# extension's OWN update code (EDS-49 step B, skukla/demo-builder-vscode), so the
+# checks answer "does an SC's storefront still work after Check for Updates?".
+# The version the canary was last brought to is kept in canary/b2b.last-synced.
+#
+# Needs: secret CANARY_REPO_TOKEN (Contents read/write on the canary repository)
+# and variable EXTENSION_REF (the extension branch or tag to run the update from).
 
 on:
   workflow_run:
@@ -21,25 +25,89 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write  # records the canary's new version in canary/b2b.last-synced
+
+concurrency:
+  group: patch-canary
+  cancel-in-progress: false
 
 jobs:
   canary:
     # After the gate only when it passed: a red gate has already said what is wrong.
     if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 30
     env:
       CANARY_URL: https://main--patch-canary-b2b--skukla.aem.live
       CANARY_LEDGER: b2b/code-patches.json
+      CANARY_REPO: skukla/patch-canary-b2b
     steps:
       - name: Checkout patches repo
         uses: actions/checkout@v4
+
+      - name: Checkout the extension
+        uses: actions/checkout@v4
+        with:
+          repository: skukla/demo-builder-vscode
+          ref: ${{ vars.EXTENSION_REF }}
+          path: extension
 
       - name: Ensure node
         uses: actions/setup-node@v4
         with:
           node-version: '20'
+
+      - name: Build the extension's update command
+        working-directory: extension
+        run: |
+          npm ci --ignore-scripts --no-audit --no-fund
+          npm run build:canary-update
+
+      - name: Record the canary's commit before the update
+        id: before
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: echo "sha=$(gh api repos/$CANARY_REPO/commits/main --jq .sha)" >> "$GITHUB_OUTPUT"
+
+      - name: Update the canary to the tested version (the extension's update code)
+        id: update
+        env:
+          CANARY_GITHUB_TOKEN: ${{ secrets.CANARY_REPO_TOKEN }}
+          CANARY_PACKAGE: starter
+          CANARY_STACK: eds-accs
+          CANARY_DALIVE_ORG: skukla
+          CANARY_DALIVE_SITE: patch-canary-b2b
+        run: |
+          export CANARY_LAST_SYNCED="$(cat canary/b2b.last-synced)"
+          node extension/dist/canary-update.js
+
+      - name: Record the canary's commit after the update
+        id: after
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: echo "sha=$(gh api repos/$CANARY_REPO/commits/main --jq .sha)" >> "$GITHUB_OUTPUT"
+
+      - name: Wait until the live site serves the updated code
+        env:
+          BEFORE: ${{ steps.before.outputs.sha }}
+          AFTER: ${{ steps.after.outputs.sha }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: node scripts/canary-wait-for-code.mjs
+
+      - name: Record the version the canary now matches
+        env:
+          SYNCED: ${{ steps.update.outputs.synced }}
+        run: |
+          if [ -z "$SYNCED" ] || [ "$SYNCED" = "$(cat canary/b2b.last-synced)" ]; then
+            echo "The canary's version is unchanged."
+            exit 0
+          fi
+          echo "$SYNCED" > canary/b2b.last-synced
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add canary/b2b.last-synced
+          git commit -m "chore(canary): the canary now matches ${SYNCED:0:7}"
+          git push
 
       - name: Install a browser
         run: |
