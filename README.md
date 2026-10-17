@@ -28,8 +28,9 @@ b2b/
   code-patches.json         3 patches against the B2B template
   runtime-surfaces.json     derived runtime-surface inventory + human residual (ADR-008)
   last-known-good           B2B template SHA storefronts build from
-last-known-good             default canonical SHA (hlxsites) for a ledger that names no
-                            lkgFile; no ledger uses it since 2026-10-17
+last-known-good             default canonical SHA (hlxsites). No ledger advances it since
+                            2026-10-17, but keep it: Demo Builder projects created
+                            2026-06-10..06-19 from `custom` read it on update checks
 scripts/lkg-gate.sh         the drift-gate check script
 scripts/derive-surfaces.mjs runtime-surface derivation + drift check (ADR-008)
 tests/                      bash unit + integration tests for the gate
