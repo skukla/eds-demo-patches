@@ -22,14 +22,14 @@ Background and rationale: **ADR-006 "Thin-Layer Storefront Customization"** in t
 ```
 citisignal/
   patches.json              content patches (DA.live HTML)
-  code-patches.json         code patches (canonical + demo-team block files)
-custom/
-  code-patches.json         1 universal patch against canonical (header)
+citisignal-b2b/
+  code-patches.json         CitiSignal's code patches against the B2B template (+ demo-team blocks)
 b2b/
   code-patches.json         3 patches against the B2B template
   runtime-surfaces.json     derived runtime-surface inventory + human residual (ADR-008)
   last-known-good           B2B template SHA storefronts build from
-last-known-good             default canonical SHA (hlxsites) — shared by citisignal + custom
+last-known-good             default canonical SHA (hlxsites) for a ledger that names no
+                            lkgFile; no ledger uses it since 2026-10-17
 scripts/lkg-gate.sh         the drift-gate check script
 scripts/derive-surfaces.mjs runtime-surface derivation + drift check (ADR-008)
 tests/                      bash unit + integration tests for the gate
@@ -38,9 +38,9 @@ tests/                      bash unit + integration tests for the gate
 
 ### Multiple canonicals
 
-Most ledgers track Adobe's canonical `hlxsites/aem-boilerplate-commerce` and share the
-root `last-known-good`. A ledger can override that by declaring its own canonical and
-LKG file path:
+A ledger with no `canonical` tracks Adobe's `hlxsites/aem-boilerplate-commerce` and the
+root `last-known-good`. Both ledgers in use today override that, declaring the B2B
+template and its LKG file:
 
 ```json
 {
@@ -53,8 +53,12 @@ LKG file path:
 
 The drift gate clones each unique canonical once per run and verifies each ledger
 against its own canonical. The workflow advances each LKG pointer independently —
-B2B can move forward while citisignal+custom stay pinned (or vice versa) if only
-one canonical's patches still verify.
+one canonical can move forward while another stays pinned, if only one canonical's
+patches still verify.
+
+The `citisignal` and `custom` code ledgers (both against hlxsites) were deleted on
+2026-10-17: no Demo Builder package read either. CitiSignal's storefronts are built
+from the B2B template and read `citisignal-b2b`.
 
 ## Code patches (`code-patches.json`)
 
@@ -89,8 +93,8 @@ Each patch is a named, precondition-anchored string replacement:
 
 ### Patch reference — what each patch does and why
 
-Every patch, what it fixes, and why it's necessary. **Ledgers**: C = citisignal,
-B = b2b, U = custom. A patch in multiple ledgers is the identical
+Every patch, what it fixes, and why it's necessary. **Ledgers**: C = citisignal-b2b,
+B = b2b. A patch in multiple ledgers is the identical
 precondition/replacement against each ledger's canonical.
 
 #### SKU URLs — no patch (C, B)
@@ -126,7 +130,7 @@ it builds the same Helix-clean path.
 
 #### Defensive / rendering fixes
 
-- **`header-nav-tools-defensive`** — `blocks/header/header.js` (C, B, U). Creates
+- **`header-nav-tools-defensive`** — `blocks/header/header.js` (C, B). Creates
   the `.nav-tools` section when it's missing. DA.live strips empty divs during
   content processing, leaving header.js to throw "Cannot read properties of null".
 - **`aem-assets-sku-sanitization`** —
