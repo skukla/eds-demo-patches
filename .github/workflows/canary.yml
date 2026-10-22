@@ -69,6 +69,14 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: echo "sha=$(gh api repos/$CANARY_REPO/commits/main --jq .sha)" >> "$GITHUB_OUTPUT"
 
+      # The update merges Adobe's change in a local clone and commits it there, so git needs an
+      # identity before it runs. Without one the first real merge failed (2026-10-22, the day the
+      # pointer next moved): "Author identity unknown".
+      - name: Give git an identity
+        run: |
+          git config --global user.name 'github-actions[bot]'
+          git config --global user.email '41898282+github-actions[bot]@users.noreply.github.com'
+
       - name: Update the canary to the tested version (the extension's update code)
         id: update
         env:
@@ -103,13 +111,12 @@ jobs:
             exit 0
           fi
           echo "$SYNCED" > canary/b2b.last-synced
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add canary/b2b.last-synced
           git commit -m "chore(canary): the canary now matches ${SYNCED:0:7}"
           git push
 
       - name: Install a browser
+        id: browser
         run: |
           npm install --no-save --no-audit --no-fund playwright@1.56.1
           npx playwright install --with-deps chromium
@@ -117,8 +124,10 @@ jobs:
       - name: Check the patches work on the canary
         run: node scripts/canary-check.mjs
 
+      # Runs even when the patch check failed, but not without a browser: that only adds a
+      # second, misleading error ("Cannot find package 'playwright'") to the real one.
       - name: Check the checks (every one must fail with its patch removed)
-        if: always()
+        if: always() && steps.browser.outcome == 'success'
         env:
           CANARY_UNPATCHED: '1'
         run: node scripts/canary-check.mjs
