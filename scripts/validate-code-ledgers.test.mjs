@@ -97,3 +97,30 @@ test('reports a ledger with no patches array', () => {
     assert.ok(validateLedger({}, 'x').length > 0);
     assert.ok(validateLedger(null, 'x').length > 0);
 });
+
+/** A retired entry: a live patch's fields plus when and why it was retired. */
+const retired = (overrides = {}) => valid({ id: 'old-fix', retiredBy: 'abc1234', reason: 'Adobe fixed it.', ...overrides });
+
+test('accepts a ledger with retired patches', () => {
+    assert.deepEqual(validateLedger({ patches: [valid()], retired: [retired()] }, 'x'), []);
+});
+
+test('a retired patch must say when and why it was retired', () => {
+    const problems = validateLedger({ patches: [], retired: [valid({ id: 'old-fix' })] }, 'x');
+    assert.ok(problems.some((p) => p.includes("'retiredBy'")), problems.join(' | '));
+    assert.ok(problems.some((p) => p.includes("'reason'")), problems.join(' | '));
+});
+
+test('a retired patch is held to the same target policy: its undo writes files too', () => {
+    const problems = validateLedger({ patches: [], retired: [retired({ target: '.github/workflows/x.yml' })] }, 'x');
+    assert.ok(problems.some((p) => p.includes('.retired[0]') && p.includes('refused target')), problems.join(' | '));
+});
+
+test('an id cannot be both live and retired', () => {
+    const problems = validateLedger({ patches: [valid({ id: 'same' })], retired: [retired({ id: 'same' })] }, 'x');
+    assert.ok(problems.some((p) => p.includes('duplicate id')));
+});
+
+test('reports a retired list that is not an array', () => {
+    assert.ok(validateLedger({ patches: [], retired: {} }, 'x').some((p) => p.includes("'retired' is not an array")));
+});

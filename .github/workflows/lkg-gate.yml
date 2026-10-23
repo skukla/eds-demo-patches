@@ -132,6 +132,9 @@ jobs:
         # FIXED_DIFFERENTLY, which still waits for a person. No PR: one opened and
         # merged in the same run left its queued checks to fail on a deleted branch,
         # and every one of those failures emailed the owner (live test, 2026-10-16).
+        # Never add these to the ledger's `retired` list: that list is UNDONE on
+        # storefronts (EDS-62), and undoing a patch upstream now ships would put
+        # upstream's old code back. `retired` is only for patches that were wrong.
         if: >-
           github.event_name != 'pull_request' &&
           steps.gate.outputs.obsolete != ''

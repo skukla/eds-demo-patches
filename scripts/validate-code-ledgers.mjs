@@ -67,58 +67,68 @@ export function checkPatchTarget(target) {
     return { allowed: true };
 }
 
+/** Fields a retired entry adds: when it was retired and why, so the undo can say. */
+const RETIRED_FIELDS = ['retiredBy', 'reason'];
+
+/** The problems with one entry, live or retired; `seen` catches an id used twice anywhere. */
+function entryProblems(patch, where, seen, extraFields) {
+    if (!patch || typeof patch !== 'object') return [`${where}: entry is not an object`];
+    const problems = [];
+    for (const field of [...REQUIRED_FIELDS, ...extraFields]) {
+        if (typeof patch[field] !== 'string' || patch[field].length === 0) {
+            problems.push(`${where}: missing or empty '${field}'`);
+        }
+    }
+    if (typeof patch.id === 'string') {
+        if (seen.has(patch.id)) problems.push(`${where}: duplicate id`);
+        seen.add(patch.id);
+    }
+    if (typeof patch.target === 'string') {
+        const verdict = checkPatchTarget(patch.target);
+        if (!verdict.allowed) problems.push(`${where}: refused target — ${verdict.reason}`);
+    }
+    if (typeof patch.replacement === 'string' && patch.replacement.length > MAX_REPLACEMENT_CHARS) {
+        problems.push(
+            `${where}: replacement is ${patch.replacement.length} chars ` +
+                `(max ${MAX_REPLACEMENT_CHARS})`,
+        );
+    }
+    return problems;
+}
+
 /**
  * Validate one parsed code-patch ledger.
  *
- * @param ledger - Parsed `{ patches: [...] }` object
+ * `retired` (optional) lists patches that were removed from `patches`, each with
+ * its exact before and after text. The extension UNDOES one on a storefront that
+ * still holds its replacement verbatim (a storefront copied from another before
+ * the retirement keeps the old code; EDS-62). An undo writes files just as an
+ * apply does, so a retired entry passes the same checks, plus `retiredBy` and
+ * `reason`, and shares the id space with the live patches.
+ *
+ * @param ledger - Parsed `{ patches: [...], retired?: [...] }` object
  * @param label - Path used in problem messages
  * @returns Array of human-readable problems; empty means clean
  */
 export function validateLedger(ledger, label) {
-    const problems = [];
-
     if (!ledger || typeof ledger !== 'object') {
         return [`${label}: not a JSON object`];
     }
     if (!Array.isArray(ledger.patches)) {
         return [`${label}: missing a 'patches' array`];
     }
+    if (ledger.retired !== undefined && !Array.isArray(ledger.retired)) {
+        return [`${label}: 'retired' is not an array`];
+    }
 
     const seen = new Set();
-
-    ledger.patches.forEach((patch, index) => {
-        const where = `${label}[${index}]${patch?.id ? ` id='${patch.id}'` : ''}`;
-
-        if (!patch || typeof patch !== 'object') {
-            problems.push(`${where}: entry is not an object`);
-            return;
-        }
-
-        for (const field of REQUIRED_FIELDS) {
-            if (typeof patch[field] !== 'string' || patch[field].length === 0) {
-                problems.push(`${where}: missing or empty '${field}'`);
-            }
-        }
-
-        if (typeof patch.id === 'string') {
-            if (seen.has(patch.id)) problems.push(`${where}: duplicate id`);
-            seen.add(patch.id);
-        }
-
-        if (typeof patch.target === 'string') {
-            const verdict = checkPatchTarget(patch.target);
-            if (!verdict.allowed) problems.push(`${where}: refused target — ${verdict.reason}`);
-        }
-
-        if (typeof patch.replacement === 'string' && patch.replacement.length > MAX_REPLACEMENT_CHARS) {
-            problems.push(
-                `${where}: replacement is ${patch.replacement.length} chars ` +
-                    `(max ${MAX_REPLACEMENT_CHARS})`,
-            );
-        }
-    });
-
-    return problems;
+    const where = (list, index, patch) => `${label}${list}[${index}]${patch?.id ? ` id='${patch.id}'` : ''}`;
+    return [
+        ...ledger.patches.flatMap((patch, i) => entryProblems(patch, where('', i, patch), seen, [])),
+        ...(ledger.retired ?? []).flatMap((patch, i) =>
+            entryProblems(patch, where('.retired', i, patch), seen, RETIRED_FIELDS),
+        ),
+    ];
 }
 
 /** Find every `<family>/code-patches.json` one level below root. */
