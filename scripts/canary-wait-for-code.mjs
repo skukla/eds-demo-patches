@@ -15,14 +15,30 @@
  *   BEFORE, AFTER   the repository's commit before and after the update
  *   GITHUB_TOKEN    for the compare call (any token that can read a public repo)
  *
+ * The live site does not serve head.html byte for byte: AEM moves a Content-Security-Policy
+ * meta marked move-to-http-header into the response headers, and replaces each nonce="aem"
+ * with a fresh random nonce per response (seen 2026-10-30, after Adobe's boilerplate added
+ * both). Both sides are compared in servedForm, which undoes exactly those two rewrites.
+ *
  * EDS-49 in skukla/demo-builder-vscode.
  */
+
+import { realpathSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 
 const { CANARY_REPO: repo, CANARY_URL: site, BEFORE: before, AFTER: after, GITHUB_TOKEN: token } = process.env;
 const LIMIT_MS = 10 * 60_000;
 const EVERY_MS = 15_000;
 /** Files Code Sync publishes: code and styles, not content or config. */
 const CODE = /^(blocks|scripts|styles)\/.+\.(js|css)$|^head\.html$/;
+
+/** A code file as the live site serves it: the CSP meta moved to a header, every nonce random. */
+export function servedForm(text) {
+    return text
+        .replace(/<meta\s+http-equiv="Content-Security-Policy"[^>]*move-to-http-header="true"\s*\/?>/gs, '')
+        .replace(/nonce="[^"]*"/g, 'nonce="aem"')
+        .trim();
+}
 
 async function changedCodeFile() {
     const res = await fetch(`https://api.github.com/repos/${repo}/compare/${before}...${after}`, {
@@ -48,7 +64,7 @@ async function main() {
     const started = Date.now();
     while (Date.now() - started < LIMIT_MS) {
         const live = await fetch(`${site.replace(/\/$/, '')}/${file}?canary=${Date.now()}`).then((r) => (r.ok ? r.text() : ''));
-        if (live === expected) {
+        if (servedForm(live) === servedForm(expected)) {
             console.log(`The live site serves the updated ${file} after ${Math.round((Date.now() - started) / 1000)}s.`);
             return;
         }
@@ -57,7 +73,10 @@ async function main() {
     throw new Error(`The live site still did not serve the updated ${file} after ${LIMIT_MS / 60_000} minutes.`);
 }
 
-main().catch((error) => {
-    console.error(`canary-wait-for-code: ${error.message}`);
-    process.exit(1);
-});
+const isMain = process.argv[1] && realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url));
+if (isMain) {
+    main().catch((error) => {
+        console.error(`canary-wait-for-code: ${error.message}`);
+        process.exit(1);
+    });
+}

@@ -47,6 +47,7 @@ jobs:
           node --test scripts/reanchor.test.mjs
           node --test scripts/verify-rewrite.test.mjs
           node --test scripts/derive-surfaces.test.mjs
+          node --test scripts/canary-wait-for-code.test.mjs
           bash tests/lkg-gate.test.sh
           bash tests/lkg-gate.integration.test.sh
 

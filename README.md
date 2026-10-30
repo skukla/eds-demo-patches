@@ -344,6 +344,7 @@ bash tests/lkg-gate.integration.test.sh  # main() flow incl. obsolete detection 
 node --test scripts/reanchor.test.mjs    # unit: whitespace-only re-anchoring
 node --test scripts/verify-rewrite.test.mjs  # unit: is a drafted rewrite fit to propose
 node --test scripts/derive-surfaces.test.mjs  # unit: surface derivation + drift diff
+node --test scripts/canary-wait-for-code.test.mjs  # unit: the canary compares code as the live site serves it
 
 # Runtime-surface check against a local boilerplate clone (ADR-008):
 node scripts/derive-surfaces.mjs derive <clone-dir>                       # print derived set
