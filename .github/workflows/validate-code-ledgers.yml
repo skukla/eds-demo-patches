@@ -50,6 +50,7 @@ jobs:
           node --test scripts/canary-wait-for-code.test.mjs
           bash tests/lkg-gate.test.sh
           bash tests/lkg-gate.integration.test.sh
+          bash tests/release-needed.test.sh
 
       - name: Validate every code ledger
         run: node scripts/validate-code-ledgers.mjs .

@@ -109,6 +109,14 @@ jobs:
               echo "main is already released as $latest — nothing to publish."
               exit 0
             fi
+            # Only what a storefront reads earns a release, or a docs commit would offer every
+            # storefront an update with nothing in it. No answer counts as a change, so a doubt
+            # publishes (scripts/release-needed.sh).
+            changed="$(gh api "repos/$GITHUB_REPOSITORY/compare/$latest...$head" --jq '.files[].filename' 2>/dev/null || true)"
+            if ! printf '%s\n' "$changed" | bash scripts/release-needed.sh; then
+              echo "Nothing a storefront reads changed since $latest — nothing to publish."
+              exit 0
+            fi
             IFS=. read -r major minor patch <<< "${latest#v}"
             next="v${major}.${minor}.$((patch + 1))"
           else
