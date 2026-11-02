@@ -35,7 +35,9 @@ jobs:
   canary:
     # After the gate only when it passed: a red gate has already said what is wrong.
     if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
-    runs-on: ubuntu-latest
+    # Pinned: playwright below does not support the ubuntu-latest of 2026-11-02 (26.04), and
+    # the install fails before the canary checks anything. Move both together.
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     env:
       CANARY_URL: https://main--patch-canary-b2b--skukla.aem.live
