@@ -354,3 +354,5 @@ node scripts/derive-surfaces.mjs check  <clone-dir> b2b/runtime-surfaces.json --
 A green local run whose stdout SHA equals `last-known-good` confirms the ledger
 applies against current canonical. If preconditions don't match, the patches are
 wrong — fix them before committing.
+
+**Releasing:** a push to `main` reaches nobody; a published release does. See [RELEASING.md](RELEASING.md).
