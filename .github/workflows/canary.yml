@@ -35,9 +35,7 @@ jobs:
   canary:
     # After the gate only when it passed: a red gate has already said what is wrong.
     if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
-    # Pinned: playwright below does not support the ubuntu-latest of 2026-11-02 (26.04), and
-    # the install fails before the canary checks anything. Move both together.
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
       CANARY_URL: https://main--patch-canary-b2b--skukla.aem.live
@@ -120,8 +118,12 @@ jobs:
       - name: Install a browser
         id: browser
         run: |
-          npm install --no-save --no-audit --no-fund playwright@1.56.1
+          # Never pinned: a held-back version is what broke when ubuntu-latest moved (2026-11-02).
+          # It decides no release, and a red run names the browser it ran with.
+          npm install --no-save --no-audit --no-fund playwright@latest
           npx playwright install --with-deps chromium
+          echo "Browser: $(npx playwright --version), $(. /etc/os-release && echo "$PRETTY_NAME")" \
+            | tee -a "$GITHUB_STEP_SUMMARY"
 
       - name: Check the patches work on the canary
         run: node scripts/canary-check.mjs
