@@ -273,7 +273,7 @@ Runs after each green gate run, daily at 09:47 UTC, and by hand.
 
 **First it updates the canary, the way an SC's Check for Updates would.** Before the checks,
 the workflow builds the Demo Builder extension's own update command (`npm run
-build:canary-update` in `skukla/demo-builder-vscode`, at the branch named by `EXTENSION_REF`)
+build:canary-update` in `skukla/demo-builder-vscode`, at `master`: what SCs run)
 and runs it on the canary: the same merge to the tested version, patch re-apply and restore
 of Demo Builder's files that an SC's project takes. Running the extension's code rather than
 a copy here means the canary tests what SCs actually get.
@@ -285,12 +285,11 @@ a copy here means the canary tests what SCs actually get.
 - "No template change to apply" is the normal result on a day the tested version did not
   move.
 
-It needs two settings on this repo:
+It needs one setting on this repo:
 
 | Setting | What | When it breaks |
 |---|---|---|
 | secret `CANARY_REPO_TOKEN` | fine-grained token, Contents read and write on `skukla/patch-canary-b2b` only, one year | expired: the update step fails with 401; save a new one with `gh secret set CANARY_REPO_TOKEN --repo skukla/eds-demo-patches` |
-| variable `EXTENSION_REF` | the extension branch to build the update from; `master` once the release carrying it merges | a deleted branch: the checkout step fails |
 
 ## The runtime-surface drift check (ADR-008)
 
