@@ -176,6 +176,13 @@ async function checkMissingProduct(browser) {
             record(id, UNCHECKED, `the control product page (${REAL_PDP}) did not render, so a redirect proves nothing`);
             return;
         }
+        // The check needs this page published: a missing one takes the CDN's 404 path, never the
+        // patched one, so "broken" would blame the patch. A project reset removes it (2026-11-04).
+        const ghost = await fetch(`${SITE}${GHOST_PDP}`, { method: 'HEAD' });
+        if (!ghost.ok) {
+            record(id, UNCHECKED, `the test page is gone: ${GHOST_PDP} answered ${ghost.status}. Publish it again`);
+            return;
+        }
         await open(page, GHOST_PDP);
         const landed = await page.waitForURL(/notfound/, { timeout: WAIT_MS }).then(() => true).catch(() => false);
         record(id, landed ? WORKS : BROKEN, landed ? 'a missing product lands on the 404 page' : `stayed on ${page.url()}`);
