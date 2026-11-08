@@ -15,8 +15,8 @@
             "id": "aem-assets-sku-sanitization",
             "target": "scripts/__dropins__/tools/lib/aem/assets.js",
             "description": "Sanitize SKU aliases (replace / with -) in the AEM Assets image slot so SKUs containing forward slashes produce valid asset URLs. Consolidates what would otherwise be 14+ per-block import swaps into one dropin patch.",
-            "precondition": "const{wrapper:s,alias:c,params:r,imageProps:n}=e;if(!n.src)throw new Error(\"An image source is required. Please provide a `src` or `imageProps.src`.\");const i=s??document.createElement(\"div\"),a=w(n.src,c,r)",
-            "replacement": "const{wrapper:s,alias:c,params:r,imageProps:n}=e;if(!n.src)throw new Error(\"An image source is required. Please provide a `src` or `imageProps.src`.\");const sanitizedAlias=c.replace(/\\//g,\"-\");const i=s??document.createElement(\"div\"),a=w(n.src,sanitizedAlias,r)",
+            "precondition": "const{wrapper:s,alias:m,params:r,imageProps:i}=e;if(!i.src)throw new Error(\"An image source is required. Please provide a `src` or `imageProps.src`.\");const n=s??document.createElement(\"div\"),o=w(i.src,m,r)",
+            "replacement": "const{wrapper:s,alias:m,params:r,imageProps:i}=e;if(!i.src)throw new Error(\"An image source is required. Please provide a `src` or `imageProps.src`.\");const sanitizedAlias=m.replace(/\\//g,\"-\");const n=s??document.createElement(\"div\"),o=w(i.src,sanitizedAlias,r)",
             "exit": "Retires when Adobe fixes this itself: the daily gate then finds the replacement already present and opens a removal PR. Not filed upstream (owner, 2026-10-16).",
             "critical": false
         },

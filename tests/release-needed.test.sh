@@ -39,6 +39,8 @@ check 1 'the docs'                            'README.md\nRELEASING.md\n'
 check 1 'a workflow'                          '.github/workflows/lkg-gate.yml\n'
 check 1 'the gate itself'                     'scripts/lkg-gate.sh\ntests/lkg-gate.test.sh\n'
 check 1 'the canary record'                   'canary/b2b.last-synced\n'
+check 1 'the hold beside a pointer'            'b2b/last-known-good.hold\n'
+check 0 'a held pointer moved back'           'b2b/last-known-good\nb2b/last-known-good.hold\n'
 
 [[ "$FAIL" == 0 ]] || { echo "$FAIL failed"; exit 1; }
 echo 'all passed'

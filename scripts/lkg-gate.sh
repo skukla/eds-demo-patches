@@ -258,8 +258,19 @@ main() {
             fi
         fi
 
-        sha="$(git -C "$clone_dir" rev-parse HEAD 2>/dev/null || echo unknown)"
         prev_lkg="$([[ -f "$lkg_file" ]] && tr -d '[:space:]' < "$lkg_file" || true)"
+        # A held pointer (`<lkg file>.hold`, its first line the reason) stays where it is: its
+        # ledgers are verified against the commit it holds, not canonical's newest, so they neither
+        # advance it nor go red over the change the hold keeps out. Delete the file to lift it.
+        if [[ -f "$lkg_file.hold" && -n "$prev_lkg" ]]; then
+            local held_dir="$workdir/held-$slug-${prev_lkg:0:12}"
+            if [[ ! -d "$held_dir" ]]; then
+                git -C "$clone_dir" worktree add --quiet --detach "$held_dir" "$prev_lkg"
+            fi
+            echo "[lkg-gate] $lkg_file is held at ${prev_lkg:0:7}: $(head -1 "$lkg_file.hold")" >&2
+            clone_dir="$held_dir"
+        fi
+        sha="$(git -C "$clone_dir" rev-parse HEAD 2>/dev/null || echo unknown)"
 
         echo "[lkg-gate] Verifying $ledger against $url @ ${sha:0:7}" >&2
         local count i

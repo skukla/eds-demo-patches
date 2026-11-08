@@ -10,7 +10,7 @@
 
 set -uo pipefail
 
-CANNOT_MATTER='^(.*\.md|\.gitignore|\.github/.*|scripts/.*|tests/.*|canary/.*)$'
+CANNOT_MATTER='^(.*\.md|.*\.hold|\.gitignore|\.github/.*|scripts/.*|tests/.*|canary/.*)$'
 # GitHub lists at most this many changed files, so a list this long may have left one out.
 COMPARE_FILE_CAP=300
 

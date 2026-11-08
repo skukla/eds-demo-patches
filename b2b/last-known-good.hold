@@ -1,0 +1,1 @@
+Adobe's template at e23ffe9 deletes component-definition.json, and Demo Builder's template update cannot yet take out a file a storefront changed (block libraries add to it). Held at f8eb94d until that ships, 2026-11-08.

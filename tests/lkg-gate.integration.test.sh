@@ -201,6 +201,41 @@ assert_eq "healthy-patch" "$(jq -r .id "$CTX.patch.json")" "the patch is saved a
 assert_eq "$(git -C "$CANON6" rev-parse HEAD)" "$(jq -r .canonicalSha "$CTX.patch.json")" "with the canonical commit it failed against"
 assert_contains "$(cat "$CTX.target")" "makeThing(options)" "and the target file as canonical has it now"
 
+# --- A held pointer: verified at the commit it holds, never advanced ------------
+# 2026-11-08: Adobe's template deleted a file Demo Builder's template update could not take out, so
+# the B2B pointer was rolled back and held while that is fixed.
+echo "# held pointer"
+CANON7="$TMP/canonical7"
+mkdir -p "$CANON7/scripts"
+git -C "$CANON7" init -q
+git -C "$CANON7" config user.email t@t.t
+git -C "$CANON7" config user.name t
+printf 'before\nconst HEALTHY = makeThing();\nafter\n' > "$CANON7/scripts/healthy.js"
+git -C "$CANON7" add -A && git -C "$CANON7" commit -qm base
+HELD="$(git -C "$CANON7" rev-parse HEAD)"
+printf 'before\nconst HEALTHY = makeThing(options);\nafter\n' > "$CANON7/scripts/healthy.js"
+git -C "$CANON7" commit -qam "upstream rewrote the patched line"
+ROOT7="$TMP/root7"
+mkdir -p "$ROOT7/citisignal"
+jq '.patches |= map(select(.id == "healthy-patch"))' "$ROOT/citisignal/code-patches.json" > "$ROOT7/citisignal/code-patches.json"
+echo "$HELD" > "$ROOT7/last-known-good"
+echo "the template update cannot take out a file the storefront changed" > "$ROOT7/last-known-good.hold"
+OUTFILE7="$TMP/gh_output7"
+: > "$OUTFILE7"
+set +e
+( cd "$ROOT7" && CANONICAL_DIR="$CANON7" BLOCK_DIR="$BLOCKS" GITHUB_OUTPUT="$OUTFILE7" WRITE_LKG=1 bash "$GATE" > /dev/null 2> "$TMP/stderr7" )
+RC7=$?
+set -e
+assert_eq "0" "$RC7" "a held ledger verified at its pointer is green, though canonical has moved past what it patches"
+assert_eq "$HELD" "$(tr -d '[:space:]' < "$ROOT7/last-known-good")" "the held pointer does not move"
+assert_contains "$(cat "$TMP/stderr7")" "is held at ${HELD:0:7}: the template update cannot take out" "the log says it is held, and why"
+rm "$ROOT7/last-known-good.hold"
+set +e
+( cd "$ROOT7" && CANONICAL_DIR="$CANON7" BLOCK_DIR="$BLOCKS" GITHUB_OUTPUT="$OUTFILE7" WRITE_LKG=1 bash "$GATE" > /dev/null 2> /dev/null )
+RC7B=$?
+set -e
+assert_eq "1" "$RC7B" "CONTROL: without the hold the same ledger is verified at canonical's newest, and goes red"
+
 echo ""
 echo "Passed: $PASS  Failed: $FAIL"
 [[ "$FAIL" -eq 0 ]]

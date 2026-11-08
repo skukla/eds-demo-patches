@@ -181,6 +181,13 @@ or Nix channel promotion. `last-known-good` holds **only** the 40-char SHA; its
 git history is the audit log of which boilerplate version storefronts received
 when (rich detail lives in the advance commit messages).
 
+**Holding a pointer.** A file beside it named `<pointer>.hold` (for B2B, `b2b/last-known-good.hold`),
+its first line the reason, keeps the pointer where it is: the gate verifies that pointer's ledgers
+against the commit it holds, not canonical's newest, so it neither advances nor goes red over the
+change the hold keeps out. Use it when a canonical change breaks something the patches cannot fix,
+such as Demo Builder's template update; delete the file to lift the hold. Added 2026-11-08, when the
+B2B template began deleting `component-definition.json`.
+
 `scripts/lkg-gate.sh` clones canonical (and the demo-team block source) and
 classifies every patch:
 
