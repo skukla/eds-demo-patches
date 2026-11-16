@@ -17,6 +17,7 @@
  *   CANARY_LEDGER            ledger to check (default: b2b/code-patches.json)
  *   CANARY_GHOST_PDP         a published product page whose SKU does not exist
  *   CANARY_REAL_PDP          a published product page whose SKU does (the control)
+ *   CANARY_PLP               a published category page (the loading-skeleton check)
  *
  * EDS-49 in skukla/demo-builder-vscode.
  */
@@ -28,13 +29,23 @@ const SITE = (process.env.CANARY_URL || 'https://main--patch-canary-b2b--skukla.
 const LEDGER = process.env.CANARY_LEDGER || 'b2b/code-patches.json';
 const GHOST_PDP = process.env.CANARY_GHOST_PDP || '/products/ghost-check/canary-ghost-sku';
 const REAL_PDP = process.env.CANARY_REAL_PDP || '/products/pulsewear-max-3/digiwristexplorer';
+const PLP = process.env.CANARY_PLP || '/apparel';
 const WAIT_MS = 20_000;
+/** How long the storefront's GraphQL answers are held, so a loading state lasts long enough to see. */
+const SLOW_MS = 3_000;
 
-/** The patches with a browser check below; any other gets the served check only. */
+/**
+ * The patches with a browser check below; any other gets the served check only.
+ * `plp-search-url-after-first-result` has none of its own: it keeps Adobe's behaviour, so a
+ * check of it would pass without it. The category-page check covers it instead (one history
+ * entry for the page just opened).
+ */
 const BEHAVIOUR_CHECKED = new Set([
     'header-nav-tools-defensive',
     'aem-assets-sku-sanitization',
     'pdp-empty-data-redirect',
+    'plp-search-skeleton',
+    'pdp-loading-skeleton',
 ]);
 
 const WORKS = 'works';
@@ -191,6 +202,60 @@ async function checkMissingProduct(browser) {
     }
 }
 
+/** A page whose GraphQL answers are held for SLOW_MS, so its loading state can be seen. */
+async function slowPage(browser) {
+    const context = await newContext(browser);
+    await context.route(/graphql/i, async (route) => {
+        await new Promise((resolve) => { setTimeout(resolve, SLOW_MS); });
+        await route.continue().catch(() => undefined);
+    });
+    return context.newPage();
+}
+
+/** Whether `selector` becomes visible while the held answers are still on their way. */
+function shownWhileLoading(page, selector) {
+    return page.locator(selector).first().waitFor({ state: 'visible', timeout: SLOW_MS })
+        .then(() => true).catch(() => false);
+}
+
+async function checkCategorySkeleton(browser) {
+    const id = 'plp-search-skeleton';
+    const page = await slowPage(browser);
+    try {
+        await page.goto(`${SITE}${PLP}`, { waitUntil: 'domcontentloaded' });
+        const entries = await page.evaluate(() => window.history.length);
+        const shown = await shownWhileLoading(page, '.product-list-page .search__product-list .dropin-skeleton');
+        const settled = await page.waitForSelector('.search__result-info:not(:empty)', { state: 'attached', timeout: WAIT_MS })
+            .then(() => true).catch(() => false);
+        await page.waitForTimeout(1_000);
+        const after = await page.evaluate(() => window.history.length);
+        if (!settled) record(id, UNCHECKED, `the category page (${PLP}) never reported its results`);
+        else if (!shown) record(id, BROKEN, 'the page stayed blank while the search loaded');
+        else if (after !== entries) record(id, BROKEN, `opening the page added ${after - entries} history entries`);
+        else record(id, WORKS, 'a loading skeleton shows while the search loads, then the results');
+    } finally {
+        await page.context().close();
+    }
+}
+
+async function checkProductSkeleton(browser) {
+    const id = 'pdp-loading-skeleton';
+    const page = await slowPage(browser);
+    try {
+        await page.goto(`${SITE}${REAL_PDP}`, { waitUntil: 'domcontentloaded' });
+        const shown = await shownWhileLoading(page, '.product-details-skeleton .dropin-skeleton');
+        const rendered = await page.locator('.product-details .product-details__wrapper').first()
+            .waitFor({ state: 'visible', timeout: WAIT_MS }).then(() => true).catch(() => false);
+        const left = await page.locator('.product-details-skeleton').count();
+        if (!rendered) record(id, UNCHECKED, `the product page (${REAL_PDP}) did not render`);
+        else if (!shown) record(id, BROKEN, 'the page stayed blank while the product loaded');
+        else if (left) record(id, BROKEN, 'the skeleton stayed after the product rendered');
+        else record(id, WORKS, 'a loading skeleton shows while the product loads, then the product');
+    } finally {
+        await page.context().close();
+    }
+}
+
 function report() {
     const lines = ['| Patch | Verdict | Detail |', '|---|---|---|'];
     for (const [id, { verdict, detail }] of verdicts) lines.push(`| ${id} | ${verdict} | ${detail} |`);
@@ -212,6 +277,8 @@ async function main() {
         await checkHeader(browser);
         await checkSkuSlash(browser);
         await checkMissingProduct(browser);
+        await checkCategorySkeleton(browser);
+        await checkProductSkeleton(browser);
     } finally {
         await browser.close();
     }

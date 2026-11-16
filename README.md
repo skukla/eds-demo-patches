@@ -25,7 +25,7 @@ citisignal/
 citisignal-b2b/
   code-patches.json         CitiSignal's code patches against the B2B template (+ demo-team blocks)
 b2b/
-  code-patches.json         3 patches against the B2B template
+  code-patches.json         6 patches against the B2B template
   runtime-surfaces.json     derived runtime-surface inventory + human residual (ADR-008)
   last-known-good           B2B template SHA storefronts build from
 last-known-good             default canonical SHA (hlxsites). No ledger advances it since
@@ -142,6 +142,31 @@ it builds the same Helix-clean path.
   `blocks/product-teaser/product-teaser.js` (C). Renders standard Commerce media
   URLs directly instead of forcing every image through the AEM Assets delivery
   path, which would break non-AEM-Assets image sources.
+- **`pdp-empty-data-redirect`** — `scripts/initializers/pdp.js` (C, B). Sends a
+  published product page whose SKU no longer exists to the 404 page instead of
+  mounting an empty product block.
+
+#### Loading skeletons — never a blank page while products load (C, B)
+
+Adobe's category and product pages showed the header over a blank body for
+seconds while their data loaded. These draw Adobe's own drop-in skeletons instead.
+
+- **`plp-search-skeleton`** — `blocks/product-list-page/product-list-page.js`.
+  Starts the first product search without awaiting it, so the containers mount at
+  once and `SearchResults` draws its built-in skeleton while the search runs.
+  Adobe's block awaited the search before mounting anything, which kept the
+  section hidden.
+- **`plp-search-url-after-first-result`** — same file. Adds the listener that
+  writes search state into the URL after the first search settles. Without it, the
+  first result (now arriving after the listener exists) would push a second
+  history entry for the page just opened. On its own it waits for nothing, so it
+  is safe if the first patch ever stops fitting.
+- **`pdp-loading-skeleton`** — `scripts/commerce.js`. On a product page the page
+  no longer waits for the product data before it appears. A skeleton in the
+  product-details block's own two-column layout (the drop-in `Skeleton`, as
+  Adobe's checkout uses) shows where the product will be, and is removed when the
+  product-details section is shown. `aem/lcp` still fires once the product is in,
+  and a failed product initializer still shows the 418 page.
 
 `product-teaser*` patches target a demo-team block (sourced live from
 `demo-system-stores/accs-citisignal`, not canonical) and apply post-install. The
@@ -266,6 +291,9 @@ store) in a browser and checks each B2B patch by what it is for:
 | `header-nav-tools-defensive` | the header renders when the menu arrives without its tools section (served that way on purpose) |
 | `aem-assets-sku-sanitization` | an image for SKU `CANARY/SLASH-1` is named `CANARY-SLASH-1`, slash replaced |
 | `pdp-empty-data-redirect` | a published product page whose SKU does not exist lands on the 404 page (a real product page, the control, does not) |
+| `plp-search-skeleton` | with the storefront's GraphQL answers held 3 seconds, a category page shows the product-list skeleton before its results, then the results, and adds no history entry |
+| `pdp-loading-skeleton` | with the same hold, a product page shows the product skeleton before the product, and the skeleton is gone once the product renders |
+| `plp-search-url-after-first-result` | none of its own: it keeps Adobe's behaviour, so a check of it would pass without it. The history count in the `plp-search-skeleton` check covers it (proved by serving the first patch alone: one extra entry, broken) |
 
 Every patch is also checked for its replacement text in the file the live site serves.
 A patch with no behaviour check says so in the report, so a new patch cannot pass on
