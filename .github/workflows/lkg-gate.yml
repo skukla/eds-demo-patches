@@ -4,12 +4,22 @@ name: LKG drift gate
 # Daily: verify every patch against canonical; advance `last-known-good` when green and
 # canonical moved; open a retirement PR when a patch's fix has landed upstream.
 # On PR: verify only — never advance the pointer (review-time correctness check).
+# On a push to main that changes a ledger: the same as the daily run, so a patch change is
+# released when it lands rather than at the next 07:17 (owner, 2026-11-16: two releases in one
+# day each needed a hand-started run). release-needed.sh still decides whether to publish, and the
+# gate's own commit of `last-known-good` is made with GITHUB_TOKEN, which starts no workflow.
 # No notification integration by design — a red run is the signal (owner preference).
 
 on:
   schedule:
     # 07:17 UTC daily — a quiet hour, off the top-of-hour Actions congestion.
     - cron: '17 7 * * *'
+  push:
+    branches: [main]
+    paths:
+      - 'b2b/**'
+      - 'citisignal/**'
+      - 'citisignal-b2b/**'
   pull_request:
     branches: [main]
   workflow_dispatch:

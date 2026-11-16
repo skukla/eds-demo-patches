@@ -34,7 +34,7 @@ last-known-good             default canonical SHA (hlxsites). No ledger advances
 scripts/lkg-gate.sh         the drift-gate check script
 scripts/derive-surfaces.mjs runtime-surface derivation + drift check (ADR-008)
 tests/                      bash unit + integration tests for the gate
-.github/workflows/lkg-gate.yml   daily cron + PR-time gate
+.github/workflows/lkg-gate.yml   daily cron + ledger push + PR-time gate
 ```
 
 ### Multiple canonicals
@@ -241,7 +241,7 @@ classifies every patch:
   latest release (`v1.1.0` → `v1.1.1`), naming the verified canonical commits.
   Demo Builder reads the ledgers and the pointers at the **latest release**, never
   at `main`, so this step is what carries a verified boilerplate (or a merged
-  ledger change, once a daily run has verified it) to storefronts and to Check for
+  ledger change, verified by the run its push to `main` starts) to storefronts and to Check for
   Updates. Nobody has to cut a release by hand. Until 2026-10-16 somebody did, and
   nobody did for seven weeks: `v1.0.0` (2026-08-28) stayed the baseline while this
   gate verified 73 newer upstream commits.
@@ -362,7 +362,7 @@ the code fetches (`loadFragment('…')`, `getMetadata('nav')`, `fetchPlaceholder
 
 The extension consumes `runtime-surfaces.json` the same way it consumes patch
 definitions and the LKG pointer: at the latest release. A merged surface-drift PR
-reaches storefronts on their next create/reset after the next green daily run
+reaches storefronts on their next create/reset after the next green gate run
 publishes a release.
 
 ## Running locally
